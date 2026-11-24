@@ -16,35 +16,48 @@ uv sync --locked
 
 This creates `.venv` and installs the versions in `uv.lock`. For later installs, `uv sync --locked` is sufficient. Activation is optional; use `source .venv/bin/activate` if desired.
 
-Start the app; no API key is required just to open it:
+Copy `.env.example` to `.env` in the repository root, then edit `.env` in your editor to set the server's model and API key. The local `.env` is ignored by Git; `.env.example` is the committed template. Start the app normally:
 
 ```bash
 uv run --locked streamlit run main.py
 ```
 
-Open the local URL printed by Streamlit, normally `http://localhost:8501`. Configure models and masked API keys in the **Model settings** sidebar, then enter a video ID such as `dQw4w9WgXcQ` and a question.
+The app automatically loads the `.env` beside `main.py`; no terminal key entry or extra startup flag is required. Existing deployment environment variables take precedence. Restart Streamlit after changing `.env`.
+
+Open the local URL printed by Streamlit, normally `http://localhost:8501`, then enter a video ID such as `dQw4w9WgXcQ` and a question. Visitors do not enter keys or configure providers in the browser. The app can open before keys are configured; Q&A needs working server credentials.
 
 ## Providers and keys
 
 Chat and embeddings use the [LiteLLM Core SDK](https://docs.litellm.ai/docs/litellm_core). Use a `provider/model` identifier from the [supported providers](https://docs.litellm.ai/docs/providers) rather than guessing the vendor from a key.
 
-| Service | Chat model format | Native environment key |
+Set these values in your local `.env`:
+
+| Setting | Purpose |
+| --- | --- |
+| `LLM_MODEL` | Chat provider/model ID |
+| `LLM_API_KEY` | Server's chat API key |
+| `LLM_BASE_URL` | Optional custom chat endpoint |
+| `EMBEDDING_MODEL` | Provider/model ID for embeddings |
+| `EMBEDDING_API_KEY` | Separate embedding key, or blank to share the chat key when provider and endpoint match |
+| `EMBEDDING_BASE_URL` | Optional custom embedding endpoint; set both URLs when sharing a custom endpoint |
+
+Native provider key names are also accepted in `.env` or the deployment environment:
+
+| Service | Chat model format | Native key name |
 | --- | --- | --- |
 | Google Gemini | `gemini/<model-id>` | `GEMINI_API_KEY` or legacy `GOOGLE_API_KEY` |
 | OpenAI | `openai/<model-id>` | `OPENAI_API_KEY` |
 | Anthropic | `anthropic/<model-id>` | `ANTHROPIC_API_KEY` |
-| Other supported vendors | Provider prefix and model ID from LiteLLM's provider guide | Enter the key in the app; similarly named `<PROVIDER>_API_KEY` variables also work |
-| OpenAI-compatible service | `openai/<model-id>` plus its endpoint URL, such as `https://your-service.example/v1` | Enter the service's key in the app |
+| Other supported vendors | Provider prefix and model ID from LiteLLM's provider guide | Use `LLM_API_KEY`; similarly named `<PROVIDER>_API_KEY` variables also work |
+| OpenAI-compatible service | `openai/<model-id>` plus its endpoint URL, such as `https://your-service.example/v1` | Use `LLM_API_KEY` and `LLM_BASE_URL` |
 
-1. Enter the **Chat model** and its API key. For a native endpoint, a blank key field uses the corresponding server environment key. Environment keys are not copied into the browser field.
-2. Choose an **Embedding model** under **Embedding settings**. Google and OpenAI chat routes prefill an editable embedding model; other routes require you to choose one. The embedding model must support the [embeddings endpoint](https://docs.litellm.ai/docs/embedding/supported_embedding).
-3. Leave the embedding key blank to share the chat key only when both provider and endpoint match, or enter a separate embedding key. For example, Anthropic chat can use OpenAI embeddings with its own OpenAI key; it does not need a Google key.
+The embedding model must support the [embeddings endpoint](https://docs.litellm.ai/docs/embedding/supported_embedding). For example, configure `LLM_MODEL=anthropic/<model-id>` and `LLM_API_KEY` for Anthropic chat, with `EMBEDDING_MODEL=openai/text-embedding-3-small` and its own `EMBEDDING_API_KEY` for OpenAI embeddings. This setup does not need a Google key.
 
-Custom endpoint URLs require a key entered in the app, so changing an endpoint cannot redirect a server environment credential. Keys entered in the app remain in the current Streamlit session; they are not written to process environment variables, history, or downloads. Credential values are redacted from displayed processing errors.
+Models, endpoints, and keys are controlled by the server configuration. Secrets are not copied into browser widgets, history, or downloads, and credential values are redacted from displayed processing errors.
 
 `LLM_MODEL` and `EMBEDDING_MODEL` can override the initial model values. Google defaults are `gemini/gemini-3.8-flash` and `gemini/gemini-embedding-001`; the old hardcoded `gemini-2.0-flash` and `embedding-001` are retired according to [Google's model lifecycle table](https://aistudio.google.com/docs/deprecations).
 
-A `.env` file is not loaded automatically. To load an ignored local file explicitly, use `uv run --env-file .env --locked streamlit run main.py`. Keep credentials out of Git and shared terminal output. Some cloud integrations require additional provider-specific authentication or optional SDK packages; a key alone does not configure those services.
+Keep `.env` local and place the server's own file on each deployment. Some cloud integrations require additional provider-specific authentication or optional SDK packages; a key alone does not configure those services.
 
 ## How it runs
 
@@ -67,7 +80,7 @@ uv run --locked python -m compileall -q main.py llm.py tests
 uv run --locked python -m unittest discover -s tests -v
 ```
 
-The checked-in unittest suite covers startup without credentials, input validation, provider/key/endpoint routing, legacy Google environment support, credential isolation and redaction, mocked Q&A/history, and embedding batching/response ordering. YouTube and model API calls are mocked; these checks do not verify live keys, account permissions, quotas, or model access.
+The checked-in unittest suite covers startup without credentials, automatic `.env` loading, deployment environment precedence, input validation, server provider/key/endpoint routing, legacy Google keys, credential isolation and redaction, mocked Q&A/history, and embedding batching/response ordering. Tests use temporary configuration files and mocked YouTube/model APIs; they do not read real local keys or verify live account permissions, quotas, or model access.
 
 Confirmed issues left for follow-up:
 

@@ -21,17 +21,18 @@
 - Use uv and the repository's `.venv`; do not install project dependencies globally or create a second environment.
 - Initial setup: `uv venv --python 3.11`, then `uv sync --locked`. For an existing environment, run `uv sync --locked`.
 - Run through uv: `uv run --locked streamlit run main.py`. Activation is optional: `source .venv/bin/activate`.
-- The app must open without credentials. Collect masked keys in the sidebar and pass them per request; never write browser-entered keys into process environment variables, shared caches, history, or logs.
+- The server owns models, endpoints, and credentials. Automatically load the repository-local `.env` beside `main.py` with python-dotenv and `override=False`; deployment environment variables take precedence. Do not ask visitors for keys or expose provider settings in browser controls.
+- `.env.example` is the committed blank template; the real `.env` stays local and ignored. Preserve an existing `.env` when setting up or updating the app. Restart the server after editing its configuration.
+- The app must open without credentials. Pass server keys per request and keep them out of browser widgets, history, downloads, shared caches, and logs.
 - Models use `provider/model` names. Chat and embedding models/keys/endpoints are independent. Share a key only when their provider and endpoint match; preserve that boundary when extending provider support.
-- Native endpoints may use `<PROVIDER>_API_KEY` environment variables; Gemini also accepts the legacy `GOOGLE_API_KEY`. Keep server environment keys out of browser widget defaults. Custom endpoints require an explicit session key so changing a URL cannot redirect a server credential.
-- `LLM_MODEL` and `EMBEDDING_MODEL` override model defaults. The app does not load `.env` files itself; use `uv run --env-file .env --locked streamlit run main.py` when needed.
+- Configure chat through `LLM_MODEL`, `LLM_API_KEY`, and optional `LLM_BASE_URL`; configure embeddings through the corresponding `EMBEDDING_*` settings. Native `<PROVIDER>_API_KEY` variables and legacy `GOOGLE_API_KEY` remain supported. Endpoint URLs are server-controlled.
 - Never print or commit credentials, `.env` files, `.streamlit/secrets.toml`, `.venv`, or private conversation exports. Verify staged files before pushing.
 - Keep `pyproject.toml` and `uv.lock` consistent when deliberately changing dependencies. Preserve the lockfile for unrelated changes.
 
 ## Validation
 
 - Run `uv pip check`, `uv run --locked python -m compileall -q main.py llm.py tests`, and `uv run --locked python -m unittest discover -s tests -v`.
-- `tests/test_app.py` uses Streamlit `AppTest` for startup, input validation, provider routing, and credential isolation. `tests/test_llm.py` covers configuration, embedding batching, and response ordering. Add a focused regression check for changed behavior.
+- `tests/test_app.py` uses Streamlit `AppTest` for startup, dotenv loading/precedence, input validation, server provider routing, and credential isolation. Mock the dotenv loader by default and use temporary fixtures for loading tests; never read a developer's actual `.env`. `tests/test_llm.py` covers configuration, embedding batching, and response ordering. Add a focused regression check for changed behavior.
 - Mock YouTube transcript fetching and LiteLLM completion/embedding calls for local checks. Placeholder keys cannot validate real service access or model availability.
 - Check input validation, successful answers/history, and displayed failures when changing the Q&A flow. Check widget/session-state behavior when changing clear or download actions.
 - A healthy `/_stcore/health` endpoint proves the server is listening; verify script execution separately. Report live checks and mocked checks distinctly.

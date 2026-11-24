@@ -17,12 +17,11 @@ def model_config(model: str, api_key: str, base_url: str = "") -> dict:
         if (url.scheme not in ("http", "https") or not url.hostname
                 or url.username or url.password or url.query or url.fragment):
             raise ValueError("Endpoint URL must be an HTTP(S) URL without credentials, query, or fragment.")
-    else:
-        api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY", "").strip()
-        if provider == "gemini":
-            api_key = api_key or os.getenv("GOOGLE_API_KEY", "").strip()
+    api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY", "").strip()
+    if provider == "gemini":
+        api_key = api_key or os.getenv("GOOGLE_API_KEY", "").strip()
     if not api_key:
-        raise ValueError(f"Enter an API key for {provider}. Custom endpoints require a key entered in the app.")
+        raise ValueError(f"Configure an API key for {provider} in the server's .env file.")
     return {"model": model, "api_key": api_key, "api_base": base_url or None}
 
 

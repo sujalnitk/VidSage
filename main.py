@@ -8,8 +8,12 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.prompts import PromptTemplate
 from typing import TypedDict
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 import nest_asyncio
 from llm import ModelEmbeddings, model_config
+
+load_dotenv(Path(__file__).resolve().with_name(".env"), override=False)
 nest_asyncio.apply()
 
 class AgentState(TypedDict):
@@ -76,37 +80,18 @@ app = graph.compile()
 
 st.set_page_config(page_title="YouTube Chat Assistant", page_icon="🤖🎥", layout="wide")
 
-with st.sidebar:
-    st.header("Model settings")
-    chat_model = st.text_input(
-        "Chat model", value=os.getenv("LLM_MODEL", "gemini/gemini-3.8-flash"),
-        help="Use provider/model, for example gemini/…, openai/…, anthropic/…, or openrouter/….",
-    ).strip()
-    chat_provider = chat_model.partition("/")[0]
-    chat_api_key = st.text_input("Chat API key", type="password", key=f"chat_key_{chat_provider}")
-    chat_base_url = st.text_input("Chat endpoint URL (optional)", key=f"chat_url_{chat_provider}")
-    st.caption("Leave the key blank to use the selected provider's environment key. Custom endpoints need a key entered here.")
-
-    with st.expander("Embedding settings", expanded=True):
-        st.caption("Choose an embedding model separately. The chat key is reused only for the same provider and endpoint.")
-        default_embedding = {
-            "gemini": "gemini/gemini-embedding-001",
-            "openai": "openai/text-embedding-3-small",
-        }.get(chat_provider, "")
-        embedding_model = st.text_input(
-            "Embedding model", value=os.getenv("EMBEDDING_MODEL", default_embedding),
-            key=f"embedding_model_{chat_provider}",
-            placeholder="provider/embedding-model",
-        ).strip()
-        embedding_provider = embedding_model.partition("/")[0]
-        embedding_api_key = st.text_input(
-            "Embedding API key (optional)", type="password",
-            key=f"embedding_key_{chat_provider}_{embedding_provider}",
-        )
-        embedding_base_url = st.text_input(
-            "Embedding endpoint URL (optional)",
-            key=f"embedding_url_{chat_provider}_{embedding_provider}",
-        )
+chat_model = os.getenv("LLM_MODEL", "gemini/gemini-3.8-flash").strip()
+chat_provider = chat_model.partition("/")[0]
+chat_api_key = os.getenv("LLM_API_KEY", "")
+chat_base_url = os.getenv("LLM_BASE_URL", "")
+default_embedding = {
+    "gemini": "gemini/gemini-embedding-001",
+    "openai": "openai/text-embedding-3-small",
+}.get(chat_provider, "")
+embedding_model = os.getenv("EMBEDDING_MODEL", default_embedding).strip()
+embedding_provider = embedding_model.partition("/")[0]
+embedding_api_key = os.getenv("EMBEDDING_API_KEY", "")
+embedding_base_url = os.getenv("EMBEDDING_BASE_URL", "")
 
 st.markdown(
     """
