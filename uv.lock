@@ -2824,6 +2824,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "litellm-core" },
     { name = "nest-asyncio" },
+    { name = "python-dotenv" },
     { name = "streamlit" },
     { name = "youtube-transcript-api" },
 ]
@@ -2836,6 +2837,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.6.5" },
     { name = "litellm-core", specifier = ">=1.110.3" },
     { name = "nest-asyncio", specifier = ">=1.6.0" },
+    { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "streamlit", specifier = ">=1.48.1" },
     { name = "youtube-transcript-api", specifier = ">=1.2.2" },
 ]

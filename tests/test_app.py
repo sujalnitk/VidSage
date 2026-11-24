@@ -1,8 +1,11 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from dotenv import load_dotenv
 from streamlit.testing.v1 import AppTest
 
 
@@ -22,6 +25,7 @@ class ProviderAppTests(unittest.TestCase):
         env = patch.dict(os.environ, {}, clear=True)
         env.start()
         self.addCleanup(env.stop)
+        self.load_env = self.enterContext(patch("dotenv.load_dotenv"))
         self.fetch = self.enterContext(patch(
             "youtube_transcript_api.YouTubeTranscriptApi.fetch",
             return_value=SimpleNamespace(snippets=[SimpleNamespace(text="This video explains retrieval augmented generation.")]),
@@ -45,7 +49,7 @@ class ProviderAppTests(unittest.TestCase):
     def test_starts_without_credentials_and_validates_before_external_calls(self):
         app = ask(self.app())
         self.assertFalse(app.exception)
-        self.assertIn("Enter an API key for gemini", app.error[0].value)
+        self.assertIn("Configure an API key for gemini", app.error[0].value)
         self.fetch.assert_not_called()
         self.embed.assert_not_called()
         self.complete.assert_not_called()
@@ -59,10 +63,10 @@ class ProviderAppTests(unittest.TestCase):
         self.assertEqual(app.warning[0].value, "Please type a question to ask about the video.")
         self.fetch.assert_not_called()
 
-    def test_google_environment_key_stays_out_of_password_field(self):
+    def test_google_server_key_never_appears_in_browser_fields(self):
         with patch.dict(os.environ, {"GOOGLE_API_KEY": "server-google-key"}):
             app = self.app()
-            self.assertEqual(field(app, "Chat API key").value, "")
+            self.assertEqual([item.label for item in app.text_input], ["YouTube Video ID"])
             ask(app)
             self.assertFalse(app.exception)
             self.assertFalse(app.error)
@@ -70,11 +74,12 @@ class ProviderAppTests(unittest.TestCase):
             self.assertEqual(self.embed.call_args.kwargs["api_key"], "server-google-key")
 
     def test_openai_compatible_endpoint_shares_key_without_google(self):
+        os.environ.update({
+            "LLM_MODEL": "openai/custom-chat", "LLM_API_KEY": "chat-secret",
+            "LLM_BASE_URL": "https://custom.example/v1",
+            "EMBEDDING_BASE_URL": "https://custom.example/v1",
+        })
         app = self.app()
-        field(app, "Chat model").set_value("openai/custom-chat").run()
-        field(app, "Chat API key").set_value("chat-secret")
-        field(app, "Chat endpoint URL (optional)").set_value("https://custom.example/v1")
-        field(app, "Embedding endpoint URL (optional)").set_value("https://custom.example/v1")
         ask(app)
         self.assertFalse(app.exception)
         self.assertFalse(app.error)
@@ -85,11 +90,11 @@ class ProviderAppTests(unittest.TestCase):
         self.assertNotIn("chat-secret", str(app.session_state["history"]))
 
     def test_anthropic_chat_with_separate_openai_embedding_key(self):
+        os.environ.update({
+            "LLM_MODEL": "anthropic/test-chat", "LLM_API_KEY": "anthropic-secret",
+            "EMBEDDING_MODEL": "openai/test-embedding", "EMBEDDING_API_KEY": "embedding-secret",
+        })
         app = self.app()
-        field(app, "Chat model").set_value("anthropic/test-chat").run()
-        field(app, "Chat API key").set_value("anthropic-secret")
-        field(app, "Embedding model").set_value("openai/test-embedding").run()
-        field(app, "Embedding API key (optional)").set_value("embedding-secret")
         ask(app)
         self.assertFalse(app.exception)
         self.assertFalse(app.error)
@@ -99,25 +104,42 @@ class ProviderAppTests(unittest.TestCase):
     def test_chat_key_is_not_forwarded_to_another_embedding_provider_or_endpoint(self):
         for model, url in (("openai/test-embedding", ""), ("gemini/test-embedding", "https://other.example")):
             with self.subTest(model=model, url=url):
+                os.environ.update({
+                    "LLM_API_KEY": "google-secret", "EMBEDDING_MODEL": model, "EMBEDDING_BASE_URL": url,
+                })
                 app = self.app()
-                field(app, "Chat API key").set_value("google-secret")
-                field(app, "Embedding model").set_value(model).run()
-                field(app, "Embedding endpoint URL (optional)").set_value(url)
                 ask(app)
                 self.assertFalse(app.exception)
                 self.assertTrue(app.error)
                 self.fetch.assert_not_called()
                 self.embed.assert_not_called()
 
-    def test_switching_chat_provider_clears_the_key_field(self):
-        app = self.app()
-        field(app, "Chat API key").set_value("google-secret").run()
-        field(app, "Chat model").set_value("openai/test").run()
-        self.assertEqual(field(app, "Chat API key").value, "")
+    def test_loads_repo_local_env_automatically(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / ".env"
+            config.write_text("LLM_MODEL=openai/test-chat\nLLM_API_KEY=file-secret\n")
+            self.load_env.side_effect = lambda path, override: load_dotenv(config, override=override)
+            app = self.app()
+            self.load_env.assert_called_once_with(Path.cwd() / ".env", override=False)
+            ask(app)
+            self.assertFalse(app.error)
+            self.assertEqual(self.complete.call_args.kwargs["model"], "openai/test-chat")
+            self.assertEqual(self.complete.call_args.kwargs["api_key"], "file-secret")
+            self.assertEqual(self.embed.call_args.kwargs["api_key"], "file-secret")
+
+    def test_deployment_environment_takes_precedence_over_env_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / ".env"
+            config.write_text("LLM_API_KEY=file-secret\n")
+            self.load_env.side_effect = lambda path, override: load_dotenv(config, override=override)
+            os.environ["LLM_API_KEY"] = "deployment-secret"
+            app = ask(self.app())
+            self.assertFalse(app.error)
+            self.assertEqual(self.complete.call_args.kwargs["api_key"], "deployment-secret")
 
     def test_provider_error_redacts_credentials_and_does_not_add_history(self):
+        os.environ["LLM_API_KEY"] = "private-key"
         app = self.app()
-        field(app, "Chat API key").set_value("private-key")
         self.complete.side_effect = RuntimeError("Provider rejected private-key")
         ask(app)
         self.assertFalse(app.exception)
@@ -126,8 +148,8 @@ class ProviderAppTests(unittest.TestCase):
         self.assertEqual(app.session_state["history"], [])
 
     def test_rejects_empty_chat_response(self):
+        os.environ["LLM_API_KEY"] = "test-key"
         app = self.app()
-        field(app, "Chat API key").set_value("test-key")
         self.complete.return_value.choices[0].message.content = None
         ask(app)
         self.assertIn("no text answer", app.error[0].value)

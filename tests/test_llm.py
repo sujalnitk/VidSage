@@ -22,13 +22,12 @@ class ModelConfigTests(unittest.TestCase):
             self.assertEqual(model_config("gemini/test", "")["api_key"], "google-key")
             self.assertEqual(model_config("openai/test", "")["api_key"], "openai-key")
             self.assertEqual(model_config("openai/test", "typed-key")["api_key"], "typed-key")
-            with self.assertRaisesRegex(ValueError, "Enter an API key for anthropic"):
+            with self.assertRaisesRegex(ValueError, "Configure an API key for anthropic"):
                 model_config("anthropic/test", "")
 
-    def test_custom_endpoint_requires_explicit_key(self):
+    def test_server_custom_endpoint_uses_configured_key(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "server-key"}, clear=True):
-            with self.assertRaisesRegex(ValueError, "Enter an API key"):
-                model_config("openai/test", "", "https://custom.example/v1")
+            self.assertEqual(model_config("openai/test", "", "https://custom.example/v1")["api_key"], "server-key")
             config = model_config("openai/test", "custom-key", "https://custom.example/v1")
             self.assertEqual(config["api_key"], "custom-key")
             self.assertEqual(config["api_base"], "https://custom.example/v1")
