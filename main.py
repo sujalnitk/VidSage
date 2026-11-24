@@ -1,7 +1,6 @@
 import streamlit as st
-import getpass
 import asyncio
-from langchain_google_genai import ChatGoogleGenerativeAI , GoogleGenerativeAIEmbeddings
+import litellm
 from langgraph.graph import StateGraph , START , END
 from youtube_transcript_api import YouTubeTranscriptApi , TranscriptsDisabled
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -10,6 +9,7 @@ from langchain_core.prompts import PromptTemplate
 from typing import TypedDict
 import os
 import nest_asyncio
+from llm import ModelEmbeddings, model_config
 nest_asyncio.apply()
 
 class AgentState(TypedDict):
@@ -17,14 +17,6 @@ class AgentState(TypedDict):
   context_text : str
   question : str
   answer : str
-
-if "GOOGLE_API_KEY" not in os.environ:
-  os.environ["GOOGLE_API_KEY"] = getpass.getpass("Enter the API Key : ...")
-
-llm = ChatGoogleGenerativeAI(
-    model = "gemini-2.0-flash"
-)
-embeddings = GoogleGenerativeAIEmbeddings(model = "models/embedding-001")
 
 def fetch_transcript(state: AgentState) -> AgentState:
   yt_api = YouTubeTranscriptApi()
@@ -60,9 +52,14 @@ def our_agent(state : AgentState) -> AgentState:
 
   final_prompt = prompt.invoke({"context":state["context_text"] , "question" : state["question"]})
 
-  result = llm.invoke(final_prompt)
-  state['answer'] = result.content
-  print(result.content)
+  result = litellm.completion(
+      messages=[{"role": "user", "content": final_prompt.to_string()}],
+      **chat_config,
+  )
+  answer = result.choices[0].message.content
+  if not isinstance(answer, str) or not answer.strip():
+      raise ValueError("The chat model returned no text answer.")
+  state['answer'] = answer
 
   return state
 
@@ -78,6 +75,38 @@ graph.add_edge("agent" , END)
 app = graph.compile()
 
 st.set_page_config(page_title="YouTube Chat Assistant", page_icon="🤖🎥", layout="wide")
+
+with st.sidebar:
+    st.header("Model settings")
+    chat_model = st.text_input(
+        "Chat model", value=os.getenv("LLM_MODEL", "gemini/gemini-3.8-flash"),
+        help="Use provider/model, for example gemini/…, openai/…, anthropic/…, or openrouter/….",
+    ).strip()
+    chat_provider = chat_model.partition("/")[0]
+    chat_api_key = st.text_input("Chat API key", type="password", key=f"chat_key_{chat_provider}")
+    chat_base_url = st.text_input("Chat endpoint URL (optional)", key=f"chat_url_{chat_provider}")
+    st.caption("Leave the key blank to use the selected provider's environment key. Custom endpoints need a key entered here.")
+
+    with st.expander("Embedding settings", expanded=True):
+        st.caption("Choose an embedding model separately. The chat key is reused only for the same provider and endpoint.")
+        default_embedding = {
+            "gemini": "gemini/gemini-embedding-001",
+            "openai": "openai/text-embedding-3-small",
+        }.get(chat_provider, "")
+        embedding_model = st.text_input(
+            "Embedding model", value=os.getenv("EMBEDDING_MODEL", default_embedding),
+            key=f"embedding_model_{chat_provider}",
+            placeholder="provider/embedding-model",
+        ).strip()
+        embedding_provider = embedding_model.partition("/")[0]
+        embedding_api_key = st.text_input(
+            "Embedding API key (optional)", type="password",
+            key=f"embedding_key_{chat_provider}_{embedding_provider}",
+        )
+        embedding_base_url = st.text_input(
+            "Embedding endpoint URL (optional)",
+            key=f"embedding_url_{chat_provider}_{embedding_provider}",
+        )
 
 st.markdown(
     """
@@ -205,7 +234,17 @@ if get_answer:
         with result_area.container():
             st.info("Processing the video and running the agent. This may take some time depending on video length.")
             progress = st.progress(0)
+            chat_config, embedding_config = {}, {}
             try:
+                chat_config = model_config(chat_model, chat_api_key, chat_base_url)
+                shared_key = ""
+                if (embedding_provider == chat_provider
+                        and embedding_base_url.strip() == chat_base_url.strip()):
+                    shared_key = chat_config["api_key"]
+                embedding_config = model_config(
+                    embedding_model, embedding_api_key.strip() or shared_key, embedding_base_url,
+                )
+                embeddings = ModelEmbeddings(embedding_config)
                 progress.progress(10)
                 initial_state = {
                     "video_id": video_id,
@@ -232,7 +271,11 @@ if get_answer:
                 st.download_button("💾 Download Answer (txt)", answer, file_name=f"answer_{video_id}.txt", mime="text/plain")
 
             except Exception as e:
-                st.error(f"Processing failed: {e}")
+                message = str(e)
+                for key in (chat_api_key, embedding_api_key, chat_config.get("api_key"), embedding_config.get("api_key")):
+                    if key:
+                        message = message.replace(key, "[redacted]")
+                st.error(f"Processing failed: {message}")
             finally:
                 progress.empty()
 
