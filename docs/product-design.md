@@ -1,6 +1,8 @@
 # VidSage product design brief
 November 24, 2026 · Proposal for discussion
 
+The [backend pipeline plan](backend-pipeline-plan.md) develops preparation, indexing, retrieval, citations, and the implementation sequence for this experience.
+
 **Design VidSage for the moment a viewer half-remembers an explanation and wants to find it again.** Someone who watched a 50-minute system design talk yesterday may remember the speaker discussing retries, but not the term “idempotency.” Give them a place to paste the link, ask in their own words, and jump to the passage that answers them. The design succeeds when they can hear the speaker and judge the answer for themselves.
 
 The proposed first audience is people revisiting technical talks and lectures. They offer a concrete way to test the idea. Whether they do this often enough to return to VidSage is still an open question.

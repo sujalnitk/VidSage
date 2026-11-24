@@ -15,6 +15,7 @@
 - FAISS indexes are rebuilt per question. History lives only in Streamlit session state and is not passed to the model as conversational memory.
 - `pyproject.toml` declares dependencies; `uv.lock` pins them; `.python-version` selects Python 3.11.
 - The README records setup, observed behavior, and unresolved baseline issues. Check it before assuming an issue is new.
+- `docs/product-design.md` and `docs/backend-pipeline-plan.md` describe proposed product and backend designs. Their module layout and pipeline changes are planning context, with implementation status determined by the current code.
 
 ## Environment and secrets
 
