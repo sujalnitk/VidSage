@@ -8,7 +8,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from llm import ModelEmbeddings, LOCAL_EMBEDDING_MODEL
-from .answering import ANSWER_SCHEMA, PROMPTS, complete_json, generate_answer, resolve_query, validate_citations
+from .answering import ANSWER_SCHEMA, PROMPTS, complete_json, conversation_context, generate_answer, resolve_query, validate_citations
 from .budget import Meter, PROVIDER_SLOTS
 from .indexing import build_index, chunk_transcript, embedding_profile
 from .ingestion import map_timestamps
@@ -136,7 +136,8 @@ def preflight(examples, snapshots, baseline, candidate, embedding, chat, judge, 
             if e.get("history"):
                 plans.append((chat["model"], 100000, 300))
             if mode == "system":
-                plans.append((chat["model"], 110000 + config.context_tokens * 6, 1200))
+                history_bytes = len(json.dumps(conversation_context(e.get("history", []))).encode())
+                plans.append((chat["model"], 40000 + history_bytes + config.context_tokens * 6, 1200))
                 gold_bytes = len(json.dumps([asdict(s) for s in snapshots[e["source_version"]].segments
                                            if any(s.id in g for g in e["evidence_sets"])]).encode())
                 plans.append((judge["model"], 100000 + gold_bytes, 300))
