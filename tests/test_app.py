@@ -158,6 +158,94 @@ class ProviderAppTests(unittest.TestCase):
                 self.assertEqual(app.session_state["history"], [])
                 os.environ.pop("VIDSAGE_RATE_CARD", None)
 
+    def test_changed_refresh_waits_for_decision_and_decline_preserves_discussion(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        session = app.session_state["session"]
+        ready, history = session.prepared, list(session.history)
+        self.fetch.return_value.snippets = [SimpleNamespace(
+            text="Changed retrieval augmented generation captions.", start=9, duration=4)]
+        next(c for c in app.checkbox if "Refresh captions" in c.label).check()
+        app.chat_input[0].set_value("Explain the change").run()
+        self.assertFalse(app.exception)
+        self.assertIs(session.prepared, ready)
+        self.assertEqual(session.history, history)
+        self.assertTrue(any("Explain the change" in m.value for m in app.markdown))
+        calls = self.embed.call_count, self.complete.call_count, self.fetch.call_count
+        next(b for b in app.button if b.label == "Keep current captions").click().run()
+        self.assertIs(session.prepared, ready)
+        self.assertEqual(session.history, history)
+        self.assertEqual(calls, (self.embed.call_count, self.complete.call_count, self.fetch.call_count))
+
+    def test_unchanged_refresh_keeps_prior_exchange_and_its_context(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        session = app.session_state["session"]
+        ready, conversation = session.prepared, session.conversation_id
+        next(c for c in app.checkbox if "Refresh captions" in c.label).check()
+        app.chat_input[0].set_value("Explain more").run()
+        self.assertFalse(app.error)
+        self.assertIs(session.prepared, ready)
+        self.assertEqual(session.conversation_id, conversation)
+        self.assertEqual(len(app.chat_message), 4)
+        self.assertEqual(self.embed.call_count, 3)  # documents once; two questions
+
+    def test_changed_refresh_accept_starts_fresh_without_answering_pending_question(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        session = app.session_state["session"]
+        old = session.conversation_id
+        self.fetch.return_value.snippets = [SimpleNamespace(
+            text="Changed retrieval augmented generation captions.", start=9, duration=4)]
+        next(c for c in app.checkbox if "Refresh captions" in c.label).check()
+        app.chat_input[0].set_value("Explain the change").run()
+        candidate = session.pending_refresh
+        calls = self.embed.call_count, self.complete.call_count, self.fetch.call_count
+        next(b for b in app.button if b.label == "Use changed captions").click().run()
+        self.assertFalse(app.exception)
+        self.assertIs(session.prepared, candidate)
+        self.assertNotEqual(session.conversation_id, old)
+        self.assertEqual(session.history, [])
+        self.assertEqual([m.markdown[0].value for m in app.chat_message], ["Explain the change"])
+        self.assertTrue(any("not been sent" in item.value for item in app.info))
+        self.assertEqual(calls, (self.embed.call_count, self.complete.call_count, self.fetch.call_count))
+        app.chat_input[0].set_value("What changed?").run()
+        self.assertFalse(app.error)
+        self.assertEqual(len(session.history), 1)
+        self.assertEqual(app.get("link_button")[0].proto.url,
+                         "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=9s")
+
+    def test_failed_caption_refresh_keeps_usable_discussion_and_redacts_error(self):
+        os.environ["LLM_API_KEY"] = "private-key"
+        app = ask(self.app())
+        session = app.session_state["session"]
+        ready, history = session.prepared, list(session.history)
+        self.fetch.side_effect = RuntimeError("Fetch failed private-key")
+        next(c for c in app.checkbox if "Refresh captions" in c.label).check()
+        app.chat_input[0].set_value("Explain more").run()
+        self.assertFalse(app.exception)
+        self.assertNotIn("private-key", app.error[0].value)
+        self.assertIn("[redacted]", app.error[0].value)
+        self.assertIs(session.prepared, ready)
+        self.assertEqual(session.history, history)
+
+    def test_refresh_obeys_server_reservation_before_fetching_replacement(self):
+        from backend.store import Store
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        session = app.session_state["session"]
+        ready = session.prepared
+        store = Store(os.environ["VIDSAGE_DB"])
+        for _ in range(99):
+            store.reserve(0)
+        calls = self.fetch.call_count, self.embed.call_count
+        next(c for c in app.checkbox if "Refresh captions" in c.label).check()
+        app.chat_input[0].set_value("Refresh please").run()
+        self.assertIn("daily request or spend limit", app.error[0].value)
+        self.assertIs(session.prepared, ready)
+        self.assertEqual(len(session.history), 1)
+        self.assertEqual(calls, (self.fetch.call_count, self.embed.call_count))
+
     def test_starts_without_credentials_and_validates_before_external_calls(self):
         app = ask(self.app())
         self.assertFalse(app.exception)
