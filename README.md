@@ -57,6 +57,12 @@ Models, endpoints, and keys are controlled by the server configuration. Secrets 
 
 Keep `.env` local and place the server's own file on each deployment. Some cloud integrations require additional provider-specific authentication or optional SDK packages; a key alone does not configure those services.
 
+## Groq chat configuration
+
+For Groq, use `LLM_MODEL=groq/openai/gpt-oss-120b` and put the Groq key in `LLM_API_KEY` or `GROQ_API_KEY`. Leave `LLM_BASE_URL` blank for the native endpoint. Available models depend on the account; check the [Groq model catalog](https://console.groq.com/docs/models).
+
+Transcript embeddings are configured independently. If the Groq account has no embedding model, configure a separate embedding provider, for example `EMBEDDING_MODEL=gemini/gemini-embedding-001` and a Google key in `EMBEDDING_API_KEY`. A Groq chat key cannot authenticate Google or OpenAI embeddings. Until an embedding provider/key is available, the app opens but video Q&A stops at configuration validation. Local embedding models are not installed by default.
+
 ## How it runs
 
 `main.py` is the Streamlit caller. The Python backend can also run without Streamlit:
@@ -105,7 +111,7 @@ uv run --locked python -m backend freeze
 uv run --locked python -m backend draft-dataset
 ```
 
-The six sources are selected from Veritasium in [eval/videos.json](eval/videos.json), with four development videos and two held-out videos. All six English tracks were fetched successfully on this local machine on November 25, 2026. Frozen captions and 60 source-linked, **unreviewed** drafts are in Git-ignored `eval/local/` in this workspace. Six drafts use clearly marked synthetic caption-injection variants. No real provider experiment has run: working model credentials and verified rates are not configured. No draft is a gold example until a human reviews it.
+The six sources are selected from Veritasium in [eval/videos.json](eval/videos.json), with four development videos and two held-out videos. All six English tracks were fetched successfully on this local machine on November 25, 2026. Frozen captions and 60 source-linked, **unreviewed** drafts are in Git-ignored `eval/local/` in this workspace. Six drafts use clearly marked synthetic caption-injection variants. No real provider experiment has run: embedding credentials and verified rates are not configured. No draft is a gold example until a human reviews it.
 
 Release gates still open: human review of the 60 questions/evidence labels, a real retrieval baseline and system/judge comparison, judge calibration, a hosted caption check, provider smoke test and verification of spend/request limits and daily cleanup on the actual host. A local caption success does not establish hosted reliability.
 

@@ -200,3 +200,23 @@ class ProviderAppTests(unittest.TestCase):
         next(b for b in app.button if b.label == "Delete my retained data").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state["history"], [])
+
+    def test_groq_chat_routes_separate_embedding_credentials(self):
+        os.environ.update({
+            "LLM_MODEL": "groq/openai/gpt-oss-120b", "GROQ_API_KEY": "groq-secret",
+            "EMBEDDING_MODEL": "gemini/gemini-embedding-001", "EMBEDDING_API_KEY": "google-secret",
+        })
+        app = ask(self.app())
+        self.assertFalse(app.error)
+        self.assertEqual(self.complete.call_args.kwargs["model"], "groq/openai/gpt-oss-120b")
+        self.assertEqual(self.complete.call_args.kwargs["api_key"], "groq-secret")
+        self.assertEqual(self.embed.call_args.kwargs["api_key"], "google-secret")
+        self.assertNotIn("groq-secret", str(app.session_state["history"]))
+
+    def test_groq_key_does_not_authenticate_google_embeddings(self):
+        os.environ.update({"LLM_MODEL": "groq/openai/gpt-oss-120b", "LLM_API_KEY": "groq-secret",
+                           "EMBEDDING_MODEL": "gemini/gemini-embedding-001"})
+        app = ask(self.app())
+        self.assertIn("Configure an API key for gemini", app.error[0].value)
+        self.fetch.assert_not_called()
+        self.complete.assert_not_called()
