@@ -85,6 +85,7 @@ class FollowupAppTests(unittest.TestCase):
         self.complete = self.enterContext(patch("llm.litellm.completion"))
         self.app = AppTest.from_file("main.py", default_timeout=20).run()
         next(w for w in self.app.text_input if w.label == "YouTube Video ID").set_value("dQw4w9WgXcQ")
+        next(b for b in self.app.button if b.label == "Open video").click().run()
 
     def send(self, question, reply, query=None, clarification=None):
         replies = [reply] if query is None and clarification is None else [
