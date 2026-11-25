@@ -92,6 +92,8 @@ Each conversation has one active video. Select Open video to activate a video; e
 
 The app opens without credentials. Configuration and secrets stay on the server, outside indexes, browser settings, history, downloads, and retained traces. Provider calls use a 30-second timeout and no automatic paid retries. The caption client uses 15-second HTTP timeouts and one retry for connection/timeouts. Captions are capped at 500,000 characters/30,000 segments; an index at 2,000 chunks; a question at 2,000 characters; a session at 100 question attempts.
 
+Challenges use the same resolution, retrieval, and citation checks, appending a correction or explanation without replacing the original reply. The model is instructed to acknowledge unsupported earlier claims and assess suggested corrections independently. Synthetic correction-flow tests verify orchestration and evidence validation; real correction quality still requires human review.
+
 ## Pilot retention and spending
 
 Retention is opt-in per answer. SQLite retains traces and attributed feedback for 30 days, purged when the store is opened or the cleanup command runs. Human-approved examples remain until deleted. **Delete my retained data** removes that session's traces, feedback, derived examples, regenerates the managed example export and registered experiment datasets, and invalidates retained comparison reports. Independently copied files and backups are outside this managed deletion path. The SQLite file is created with owner-only permissions.
