@@ -125,7 +125,8 @@ def ask_question(session, prepared_id, question, request_id, chat_config, embedd
         def generation(state):
             if state.get("clarification"):
                 return {}
-            draft = timed("generation", lambda: generate_answer(state["query"], state["context"], chat_config, config.prompt, usage, meter))
+            draft = timed("generation", lambda: generate_answer(question, state["context"], chat_config, config.prompt, usage, meter,
+                                                               history=session.history, retrieval_query=state["query"]))
             stages["draft"] = asdict(draft)
             return {"draft": draft}
 
