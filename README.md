@@ -22,7 +22,7 @@ uv run --locked streamlit run main.py
 
 The app automatically loads the `.env` beside `main.py`; no terminal key entry or extra startup flag is required. Existing deployment environment variables take precedence. Restart Streamlit after changing `.env`.
 
-Open the local URL printed by Streamlit, normally `http://localhost:8501`, then enter a video ID such as `dQw4w9WgXcQ` and a question. Visitors do not enter keys or configure providers in the browser. The app can open before keys are configured; Q&A needs working server credentials.
+Open the local URL printed by Streamlit, normally `http://localhost:8501`, then enter a video ID such as `dQw4w9WgXcQ` and send a message in the chat. Visitors do not enter keys or configure providers in the browser. The app can open before keys are configured; Q&A needs working server credentials.
 
 ## Providers and keys
 
@@ -88,7 +88,7 @@ Preparation preserves caption timing, generated-track status, language and conte
 
 Questions run `resolve → retrieve → generate → validate` through LangGraph. The resolver sees the last three same-video turns (bounded to 2,000 characters each). Context is limited to 4,096 UTF-8 bytes as a conservative token bound. Answers must cite exact excerpts from supplied source IDs; unsupported questions produce an insufficient-context result. Structural citation checks cannot establish that the excerpt logically supports the claim; the judge and human review address that separately.
 
-Each conversation has one active video. Switching videos or clearing history starts a new conversation and releases the active index. History is bounded to 20 turns. Duplicate request IDs return one completed result; failed request IDs remain tombstones. Streamlit also suppresses repeated completed submissions with the same inputs. Requests are serialized per session and provider work is limited to two concurrent operations in the application process.
+Each conversation has one active video. Switching videos or clearing history starts a new conversation and releases the active index. The session-only conversation displays up to 20 exchanges chronologically and may be lost on reload; answer and history downloads let viewers keep a copy. Duplicate request IDs return one completed result; failed request IDs remain tombstones. Each deliberate chat submission has its own identity, so repeating the same text creates another exchange while reruns do not repeat completed work. Requests are serialized per session and provider work is limited to two concurrent operations in the application process.
 
 The app opens without credentials. Configuration and secrets stay on the server, outside indexes, browser settings, history, downloads, and retained traces. Provider calls use a 30-second timeout and no automatic paid retries. The caption client uses 15-second HTTP timeouts and one retry for connection/timeouts. Captions are capped at 500,000 characters/30,000 segments; an index at 2,000 chunks; a question at 2,000 characters; a session at 100 question attempts.
 
