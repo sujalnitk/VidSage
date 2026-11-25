@@ -35,12 +35,20 @@ def clear_history():
 
 def submit_message():
     submission = st.session_state.get("submission")
-    if submission and submission["status"] in {"pending", "processing"}:
+    if submission and submission["status"] in {"pending", "processing", "failed"}:
         return
     st.session_state.submission = {
         "id": uuid4().hex, "question": st.session_state.question_input,
-        "status": "pending",
+        "status": "pending", "consent": st.session_state.retain_consent,
+        "video": st.session_state.video_input,
     }
+
+
+def retry_message():
+    submission = st.session_state.get("submission")
+    if submission and submission["status"] == "failed":
+        submission.update(id=uuid4().hex, status="pending")
+        submission.pop("error", None)
 
 
 if "session" not in st.session_state:
@@ -58,14 +66,18 @@ with left:
         try:
             active_video = parse_video(video)
             if session.video_id != active_video:
+                if st.session_state.get("submission", {}).get("video") != video:
+                    st.session_state.pop("submission", None)
                 session.switch(active_video)
             st.video(f"https://www.youtube.com/watch?v={active_video}")
         except PipelineError:
             if session.video_id is not None:
+                st.session_state.pop("submission", None)
                 session.switch()
     elif session.video_id is not None:
+        st.session_state.pop("submission", None)
         session.switch()
-    consent = st.checkbox("Keep this question, answer, and feedback locally for 30 days", value=False)
+    st.checkbox("Keep this question, answer, and feedback locally for 30 days", value=False, key="retain_consent")
     st.caption("Reviewed evaluation examples remain until deleted. You can delete your retained data below.")
     refresh = st.checkbox("Refresh captions on the next question", value=False)
     st.button("🔁 Clear Fields", on_click=clear_fields)
@@ -76,8 +88,6 @@ with left:
     if active_video:
         st.caption(f"Video conversation: {active_video}")
     submission = st.session_state.get("submission")
-    st.chat_input("Ask about this video", key="question_input", on_submit=submit_message,
-                  disabled=bool(submission and submission["status"] == "processing"))
     if submission and submission["status"] == "pending":
         submission["status"] = "processing"
         question = submission["question"]
@@ -85,8 +95,10 @@ with left:
         try:
             if not video.strip():
                 st.warning("Please enter a YouTube video ID.")
+                submission["status"] = "completed"
             elif not question.strip():
                 st.warning("Please type a question to ask about the video.")
+                submission["status"] = "completed"
             else:
                 parse_video(video)
                 if len(question.strip()) > 2000:
@@ -103,13 +115,17 @@ with left:
                 with st.spinner("Preparing captions and finding evidence…"):
                     prepared = prepare_video(session, video, embedding, config, refresh=refresh, meter=meter)
                     ask_question(session, prepared.id, question, submission["id"], chat, embedding, config,
-                                 consent, store, meter)
+                                 submission["consent"], store, meter)
+                submission["status"] = "completed"
                 st.success("Answer ready")
         except Exception as error:
             keys = [chat.get("api_key"), embedding.get("api_key"), os.getenv("LLM_API_KEY"), os.getenv("EMBEDDING_API_KEY")]
-            st.error(f"Processing failed: {redact(str(error), keys)}")
-        finally:
-            submission["status"] = "completed"
+            submission["question"] = redact(question, keys)
+            submission["error"] = f"Processing failed: {redact(str(error), keys)}"
+            submission["status"] = "failed"
+
+    st.chat_input("Ask about this video", key="question_input", on_submit=submit_message,
+                  disabled=bool(submission and submission["status"] in {"pending", "processing", "failed"}))
 
     for turn in session.history:
         with st.chat_message("user"):
@@ -133,9 +149,16 @@ with left:
                     except Exception:
                         st.error("Feedback could not be saved. Your retained run may have expired or been deleted.")
 
+    if submission and submission["status"] == "failed":
+        with st.chat_message("user"):
+            st.write(submission["question"])
+            st.error(submission["error"])
+            st.caption("Retry makes another attempt under the same request and spending limits. Clear the conversation to discard this message.")
+            st.button("Retry", on_click=retry_message)
+
 with right:
     st.subheader("Conversation controls")
-    if not session.history:
+    if not session.history and not (submission and submission["status"] == "failed"):
         st.caption("No messages yet.")
     st.download_button("📥 Download Full History (JSON)", json.dumps(session.history, indent=2),
                        file_name="vidsage_history.json", mime="application/json")
@@ -143,4 +166,5 @@ with right:
     if st.button("Delete my retained data"):
         Store(os.getenv("VIDSAGE_DB", ".vidsage/pilot.sqlite3")).delete_session(session.id)
         session.switch(session.video_id)
+        st.session_state.pop("submission", None)
         st.rerun()

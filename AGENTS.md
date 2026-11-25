@@ -9,7 +9,7 @@
 
 ## Project map
 
-- `main.py` contains chronological Streamlit chat, submission identity, answer/citation display, session controls, and feedback consent. It calls the backend; no model settings are exposed to visitors.
+- `main.py` contains chronological Streamlit chat, submission identity and explicit failed-message Retry, answer/citation display, session controls, and feedback consent. It calls the backend; no model settings are exposed to visitors.
 - `backend/schemas.py` defines shared immutable contracts and the allowlisted configuration catalog. `backend/ingestion.py`, `indexing.py`, `retrieval.py`, and `answering.py` contain independently testable stages.
 - `backend/service.py` exposes `prepare_video`, `ask_question`, and `record_feedback`. Its question graph is `START -> resolve -> retrieve -> generate -> validate -> END`.
 - `backend/store.py` owns SQLite retention, reviewed examples, quotas, comparison reports, selection, and rollback. `backend/evaluation.py` and `python -m backend` implement owner-triggered experiments. See `docs/evaluation.md` for the workflow and remaining release gates.

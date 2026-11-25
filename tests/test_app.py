@@ -69,6 +69,93 @@ class ProviderAppTests(unittest.TestCase):
                           "Explain more", "The video explains RAG."])
         self.assertTrue(any("Session-only" in item.value and "reload" in item.value for item in app.caption))
 
+    def test_preparation_failure_keeps_message_until_explicit_retry(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        self.fetch.side_effect = RuntimeError("Captions temporarily unavailable")
+        app = ask(self.app())
+        self.assertEqual([m.markdown[0].value for m in app.chat_message],
+                         ["What is the video about?"])
+        self.assertIn("failed", app.error[0].value)
+        app.run()
+        self.fetch.assert_called_once()
+        self.fetch.side_effect = None
+        next(b for b in app.button if b.label == "Retry").click().run()
+        self.assertFalse(app.error)
+        self.assertEqual(len(app.chat_message), 2)
+        self.assertEqual(len(app.session_state["history"]), 1)
+        self.assertEqual(self.fetch.call_count, 2)
+        app.run()
+        self.assertEqual(self.fetch.call_count, 2)
+        self.complete.assert_called_once()
+
+    def test_preparation_failure_preserves_existing_exchange_and_ready_video(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        self.fetch.side_effect = RuntimeError("temporary caption failure")
+        next(c for c in app.checkbox if "Refresh captions" in c.label).check()
+        app.chat_input[0].set_value("Explain more").run()
+        self.assertEqual([m.name for m in app.chat_message], ["user", "assistant", "user"])
+        self.assertEqual(len(app.session_state["history"]), 1)
+        next(c for c in app.checkbox if "Refresh captions" in c.label).uncheck().run()
+        next(b for b in app.button if b.label == "Retry").click().run()
+        self.assertFalse(app.error)
+        self.assertEqual(len(app.session_state["history"]), 2)
+        self.assertEqual(self.fetch.call_count, 2)  # initial fetch and failed refresh only
+
+    def test_answer_failure_retry_preserves_history_index_and_original_consent(self):
+        os.environ["LLM_API_KEY"] = "private-key"
+        app = ask(self.app())
+        self.complete.side_effect = RuntimeError("Provider rejected private-key")
+        app.chat_input[0].set_value("Explain more").run()
+        self.assertEqual([m.name for m in app.chat_message], ["user", "assistant", "user"])
+        self.assertEqual(app.chat_message[-1].markdown[0].value, "Explain more")
+        self.assertIn("[redacted]", app.error[0].value)
+        self.assertNotIn("private-key", str(app.session_state["submission"]))
+        self.assertEqual(len(app.session_state["history"]), 1)
+        self.assertTrue(app.chat_input[0].disabled)
+        calls = self.complete.call_count
+        next(c for c in app.checkbox if "30 days" in c.label).check().run()
+        self.assertEqual(self.complete.call_count, calls)
+        self.complete.side_effect = self.completion
+        next(b for b in app.button if b.label == "Retry").click().run()
+        self.assertFalse(app.error)
+        self.assertEqual([m.name for m in app.chat_message], ["user", "assistant", "user", "assistant"])
+        self.assertEqual([turn["consent"] for turn in app.session_state["history"]], [False, False])
+        self.fetch.assert_called_once()
+        calls = self.complete.call_count
+        app.run()
+        self.assertEqual(self.complete.call_count, calls)
+        self.assertFalse(any(b.label == "Retry" for b in app.button))
+
+    def test_retry_respects_global_attempt_and_spending_reservations(self):
+        from backend.store import Store
+
+        os.environ["LLM_API_KEY"] = "test-key"
+        for limit in ("attempts", "spend"):
+            with self.subTest(limit=limit):
+                os.environ["VIDSAGE_DB"] = str(Path(self.directory) / f"{limit}.sqlite3")
+                self.fetch.side_effect = RuntimeError("temporary caption failure")
+                app = ask(self.app())
+                store = Store(os.environ["VIDSAGE_DB"])
+                if limit == "attempts":
+                    for _ in range(99):
+                        store.reserve(0)
+                else:
+                    store.reserve(5)
+                    rate_file = Path(self.directory) / "rates.json"
+                    rate_file.write_text(json.dumps({
+                        "verified_at": "2026-11-25", "source": "https://example.com/prices",
+                        "models": {},
+                    }))
+                    os.environ["VIDSAGE_RATE_CARD"] = str(rate_file)
+                calls = self.fetch.call_count
+                next(b for b in app.button if b.label == "Retry").click().run()
+                self.assertIn("limit", app.error[0].value)
+                self.assertEqual(self.fetch.call_count, calls)
+                self.assertEqual(len(app.chat_message), 1)
+                self.assertEqual(app.session_state["history"], [])
+                os.environ.pop("VIDSAGE_RATE_CARD", None)
+
     def test_starts_without_credentials_and_validates_before_external_calls(self):
         app = ask(self.app())
         self.assertFalse(app.exception)

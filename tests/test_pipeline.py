@@ -210,6 +210,34 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.complete.call_count, 1)
         self.assertEqual(self.session.history, [])
 
+    def test_explicit_new_attempt_preserves_completed_exchange_and_reuses_success(self):
+        first = self.ask("first")
+        self.complete.side_effect = RuntimeError("temporary provider failure")
+        with self.assertRaises(RuntimeError):
+            self.ask("failed")
+        self.assertIs(self.session.prepared, self.ready)
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["first"])
+        self.complete.side_effect = completion
+        retried = self.ask("explicit-retry")
+        calls = self.complete.call_count
+        self.assertEqual(self.ask("explicit-retry"), retried)
+        self.assertEqual(self.ask("first"), first)
+        self.assertEqual(self.complete.call_count, calls)
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["first", "explicit-retry"])
+
+    def test_failed_new_attempts_exhaust_session_request_limit(self):
+        self.ask("first")
+        self.complete.side_effect = RuntimeError("temporary provider failure")
+        for attempt in range(99):
+            with self.assertRaises(RuntimeError):
+                self.ask(f"failed-{attempt}")
+        calls = self.complete.call_count
+        with self.assertRaisesRegex(PipelineError, "100-question limit"):
+            self.ask("explicit-retry")
+        self.assertEqual(self.complete.call_count, calls)
+        self.assertIs(self.session.prepared, self.ready)
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["first"])
+
     def test_video_session_isolation_and_stale_answers(self):
         other = Session()
         with self.assertRaisesRegex(PipelineError, "Prepare"):
