@@ -81,6 +81,7 @@ class LocalEmbeddingTests(unittest.TestCase):
                 snippets=[SimpleNamespace(text="Retrieval finds evidence before answering.", start=1., duration=3.)])):
             app = AppTest.from_file("main.py", default_timeout=20).run()
             app.text_input[0].set_value("dQw4w9WgXcQ")
+            next(b for b in app.button if b.label == "Open video").click().run()
             app.chat_input[0].set_value("What does retrieval do?").run()
             self.assertFalse(app.exception)
             self.assertFalse(app.error)

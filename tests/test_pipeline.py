@@ -223,6 +223,23 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.session.history, [])
         self.assertIsNone(self.session.prepared)
 
+    def test_clear_during_answer_rejects_stale_result_even_for_same_video(self):
+        original_conversation = self.session.conversation_id
+        def clear(messages, **kwargs):
+            self.session.switch(self.source.video_id)
+            return completion(messages, **kwargs)
+        self.complete.side_effect = clear
+        with self.assertRaisesRegex(PipelineError, "active video changed"):
+            self.ask("stale-after-clear")
+        self.assertEqual(self.session.history, [])
+        self.assertNotEqual(self.session.conversation_id, original_conversation)
+        self.complete.side_effect = completion
+        self.ready = prepare_video(self.session, self.source.video_id, EMBED)
+        with self.assertRaisesRegex(PipelineError, "already used"):
+            self.ask("stale-after-clear")
+        self.ask("fresh-after-clear")
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["fresh-after-clear"])
+
     def test_consent_feedback_attribution_and_credential_isolation(self):
         self.ask("private")
         with self.store.connect() as db:
