@@ -16,8 +16,7 @@ def field(app, label):
 
 def ask(app):
     field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ")
-    app.text_area[0].set_value("What is the video about?")
-    next(button for button in app.button if button.label == "💡 Get Answer").click().run()
+    app.chat_input[0].set_value("What is the video about?").run()
     return app
 
 
@@ -43,11 +42,32 @@ class ProviderAppTests(unittest.TestCase):
             "llm.litellm.completion",
             return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"outcome": "answered", "claims": [{"text": "The video explains RAG.", "evidence": [{"source_id": "S1", "excerpt": "retrieval augmented generation"}]}]})))]),
         ))
+        self.complete.side_effect = self.completion
+
+    def completion(self, **kwargs):
+        if kwargs["max_tokens"] == 300:
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content=json.dumps({"query": "Explain retrieval augmented generation", "clarification": None})))])
+        return self.complete.return_value
 
     def app(self):
         app = AppTest.from_file("main.py", default_timeout=20).run()
         self.assertFalse(app.exception)
         return app
+
+    def test_video_conversation_displays_exchanges_in_chronological_order(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = self.app()
+        field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ").run()
+        app.chat_input[0].set_value("What is RAG?").run()
+        app.chat_input[0].set_value("Explain more").run()
+        self.assertFalse(app.exception)
+        self.assertEqual([message.name for message in app.chat_message],
+                         ["user", "assistant", "user", "assistant"])
+        self.assertEqual([message.markdown[0].value for message in app.chat_message],
+                         ["What is RAG?", "The video explains RAG.",
+                          "Explain more", "The video explains RAG."])
+        self.assertTrue(any("Session-only" in item.value and "reload" in item.value for item in app.caption))
 
     def test_starts_without_credentials_and_validates_before_external_calls(self):
         app = ask(self.app())
@@ -59,10 +79,10 @@ class ProviderAppTests(unittest.TestCase):
 
     def test_validates_video_and_question_before_provider_settings(self):
         app = self.app()
-        next(button for button in app.button if button.label == "💡 Get Answer").click().run()
+        app.chat_input[0].set_value("What is the video about?").run()
         self.assertEqual(app.warning[0].value, "Please enter a YouTube video ID.")
         field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ")
-        next(button for button in app.button if button.label == "💡 Get Answer").click().run()
+        app.chat_input[0].set_value("   ").run()
         self.assertEqual(app.warning[0].value, "Please type a question to ask about the video.")
         self.fetch.assert_not_called()
 
@@ -158,15 +178,38 @@ class ProviderAppTests(unittest.TestCase):
         self.assertIn("no text answer", app.error[0].value)
         self.assertEqual(app.session_state["history"], [])
 
-    def test_repeated_submit_reuses_completed_turn_and_index(self):
+    def test_deliberate_repeated_message_creates_new_exchange_and_reuses_index(self):
         os.environ["LLM_API_KEY"] = "test-key"
         app = ask(self.app())
-        ask(app)
+        app.chat_input[0].set_value("Explain more").run()
+        app.chat_input[0].set_value("Explain more").run()
         self.assertFalse(app.error)
-        self.assertEqual(len(app.session_state["history"]), 1)
+        self.assertEqual([turn["question"] for turn in app.session_state["history"]],
+                         ["What is the video about?", "Explain more", "Explain more"])
+        self.fetch.assert_called_once()
+        self.assertEqual(self.embed.call_count, 4)
+        self.assertEqual(self.complete.call_count, 5)
+
+    def test_rerun_does_not_redeliver_completed_submission(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        app.run()
+        next(c for c in app.checkbox if c.label == "Show instructions").check().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(len(app.chat_message), 2)
         self.fetch.assert_called_once()
         self.assertEqual(self.embed.call_count, 2)
         self.complete.assert_called_once()
+
+    def test_chat_keeps_caption_links_excerpts_and_downloads(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        assistant = app.chat_message[1]
+        self.assertEqual(assistant.text[0].value, "retrieval augmented generation")
+        self.assertEqual(app.get("link_button")[0].proto.url,
+                         "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=2s")
+        self.assertEqual([item.label for item in app.get("download_button")],
+                         ["💾 Download Answer (txt)", "📥 Download Full History (JSON)"])
 
     def test_clear_controls_and_video_switch_remove_stale_answers(self):
         os.environ["LLM_API_KEY"] = "test-key"
@@ -180,7 +223,7 @@ class ProviderAppTests(unittest.TestCase):
         next(b for b in app.button if b.label == "🔁 Clear Fields").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(field(app, "YouTube Video ID").value, "")
-        self.assertEqual(app.text_area[0].value, "")
+        self.assertEqual(app.chat_input[0].value, "")
 
     def test_pilot_requires_prices_before_external_calls(self):
         os.environ.update(LLM_API_KEY="test-key", VIDSAGE_PILOT="1")
