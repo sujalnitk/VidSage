@@ -10,7 +10,7 @@ import streamlit as st
 from backend.budget import Meter, load_rates
 from backend.ingestion import parse_video
 from backend.schemas import PipelineError
-from backend.service import Session, ask_question, prepare_video, record_feedback
+from backend.service import Session, ask_question, decide_refresh, prepare_video, record_feedback
 from backend.store import Store, redact
 from llm import server_configs
 
@@ -33,9 +33,20 @@ def clear_history():
     st.session_state.history = session.history
 
 
+def choose_captions(accept):
+    submission = st.session_state.submission
+    try:
+        decide_refresh(st.session_state.session, submission["refresh_id"], accept)
+    except PipelineError:
+        submission["refresh_error"] = "This caption replacement is no longer available. The current conversation was kept."
+    submission["status"] = "refresh_decided"
+    submission["refresh_conversation"] = st.session_state.session.conversation_id
+    st.session_state.refresh_input = False
+
+
 def submit_message():
     submission = st.session_state.get("submission")
-    if submission and submission["status"] in {"pending", "processing"}:
+    if submission and submission["status"] in {"pending", "processing", "awaiting_refresh"}:
         return
     st.session_state.submission = {
         "id": uuid4().hex, "question": st.session_state.question_input,
@@ -67,7 +78,7 @@ with left:
         session.switch()
     consent = st.checkbox("Keep this question, answer, and feedback locally for 30 days", value=False)
     st.caption("Reviewed evaluation examples remain until deleted. You can delete your retained data below.")
-    refresh = st.checkbox("Refresh captions on the next question", value=False)
+    refresh = st.checkbox("Refresh captions on the next question", value=False, key="refresh_input")
     st.button("🔁 Clear Fields", on_click=clear_fields)
     if st.checkbox("Show instructions"):
         st.info("Enter a YouTube URL or ID, then send a message below. Follow-up questions use recent exchanges from this video. Switching videos starts a new conversation.")
@@ -76,8 +87,6 @@ with left:
     if active_video:
         st.caption(f"Video conversation: {active_video}")
     submission = st.session_state.get("submission")
-    st.chat_input("Ask about this video", key="question_input", on_submit=submit_message,
-                  disabled=bool(submission and submission["status"] == "processing"))
     if submission and submission["status"] == "pending":
         submission["status"] = "processing"
         question = submission["question"]
@@ -102,14 +111,23 @@ with left:
                 store.reserve(0.25 if meter else 0)
                 with st.spinner("Preparing captions and finding evidence…"):
                     prepared = prepare_video(session, video, embedding, config, refresh=refresh, meter=meter)
-                    ask_question(session, prepared.id, question, submission["id"], chat, embedding, config,
-                                 consent, store, meter)
-                st.success("Answer ready")
+                    if prepared is session.pending_refresh:
+                        submission["status"] = "awaiting_refresh"
+                        submission["refresh_id"] = prepared.id
+                        submission["refresh_conversation"] = session.conversation_id
+                    else:
+                        ask_question(session, prepared.id, question, submission["id"], chat, embedding, config,
+                                     consent, store, meter)
+                        st.success("Answer ready")
         except Exception as error:
             keys = [chat.get("api_key"), embedding.get("api_key"), os.getenv("LLM_API_KEY"), os.getenv("EMBEDDING_API_KEY")]
             st.error(f"Processing failed: {redact(str(error), keys)}")
         finally:
-            submission["status"] = "completed"
+            if submission["status"] != "awaiting_refresh":
+                submission["status"] = "completed"
+
+    st.chat_input("Ask about this video", key="question_input", on_submit=submit_message,
+                  disabled=bool(submission and submission["status"] in {"processing", "awaiting_refresh"}))
 
     for turn in session.history:
         with st.chat_message("user"):
@@ -132,6 +150,24 @@ with left:
                         st.success("Feedback saved locally.")
                     except Exception:
                         st.error("Feedback could not be saved. Your retained run may have expired or been deleted.")
+
+    if submission and submission["status"] in {"awaiting_refresh", "refresh_decided"}:
+        candidate = session.pending_refresh
+        if (submission["refresh_conversation"] != session.conversation_id
+                or (submission["status"] == "awaiting_refresh" and (
+                    candidate is None or candidate.id != submission["refresh_id"]))):
+            st.session_state.pop("submission", None)
+            st.rerun()
+        with st.chat_message("user"):
+            st.write(submission["question"])
+        if submission["status"] == "awaiting_refresh":
+            st.warning("Captions changed. Using them will discard this discussion and start a fresh conversation. Keep the current captions to preserve it.")
+            st.button("Use changed captions", on_click=choose_captions, args=(True,))
+            st.button("Keep current captions", on_click=choose_captions, args=(False,))
+        else:
+            if submission.get("refresh_error"):
+                st.error(submission["refresh_error"])
+            st.info("Your question above has not been sent. Send it again when ready to use the chosen captions; no answer was requested by this decision.")
 
 with right:
     st.subheader("Conversation controls")
