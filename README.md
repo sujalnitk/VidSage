@@ -120,6 +120,10 @@ The six sources are selected from Veritasium in [eval/videos.json](eval/videos.j
 
 Release gates still open: human review of the 60 questions/evidence labels, a real retrieval baseline and system/judge comparison, judge calibration, a hosted caption check, provider smoke test and verification of spend/request limits and daily cleanup on the actual host. A local caption success does not establish hosted reliability.
 
+## Engineering workflow
+
+Matt's engineering skills use local Markdown: specifications live in `.scratch/<feature-slug>/spec.md`, with one numbered ticket per file in `.scratch/<feature-slug>/issues/`. See [issue tracker conventions](docs/agents/issue-tracker.md) and [domain documentation rules](docs/agents/domain.md). You can edit `docs/agents/*.md` directly as the workflow evolves.
+
 ## Validation
 
 ```bash

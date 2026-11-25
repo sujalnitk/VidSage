@@ -43,6 +43,18 @@
 - Check input validation, successful answers/history, and displayed failures when changing the Q&A flow. Check widget/session-state behavior when changing clear or download actions.
 - A healthy `/_stcore/health` endpoint proves the server is listening; verify script execution separately. Report live checks and mocked checks distinctly.
 
+## Agent skills
+
+### Issue tracker
+
+Specifications and tickets live in `.scratch/<feature>/`.
+See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` and `docs/adr/`.
+See `docs/agents/domain.md`.
+
 ## Git workflow
 
 - Routine task-related commits and pushes are authorized. Carry completed work through validation, commit, and push without asking again.
