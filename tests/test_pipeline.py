@@ -258,6 +258,22 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNone(self.session.prepared)
         self.assertIsNone(self.session.pending_refresh)
 
+    def test_retained_context_stays_bounded_without_renumbering_and_resets_on_switch(self):
+        for i in range(22):
+            self.ask(str(i))
+        self.assertEqual([turn["exchange_number"] for turn in self.session.history], list(range(3, 23)))
+        for call in self.complete.call_args_list:
+            payload = json.loads(call.kwargs["messages"][-1]["content"])
+            self.assertLessEqual(len(payload["history"]), 20)
+        self.assertEqual(self.session.removed_exchanges, 2)
+        self.ask("21")  # Duplicate delivery does not prune another exchange.
+        self.assertEqual(self.session.removed_exchanges, 2)
+        self.session.switch(self.source.video_id)
+        self.ready = prepare_video(self.session, self.source.video_id, EMBED)
+        self.ask("fresh")
+        self.assertEqual(self.session.history[0]["exchange_number"], 1)
+        self.assertEqual(self.session.removed_exchanges, 0)
+
     def test_failed_refresh_preserves_ready_index(self):
         self.fetch.side_effect = RuntimeError("temporary")
         with self.assertRaises(RuntimeError):

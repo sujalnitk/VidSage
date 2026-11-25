@@ -63,7 +63,7 @@ def validate_example(example, snapshot=None):
                 or any(s not in ids for group in groups for s in group)):
             raise ValueError("An example does not match its frozen source segments.")
     history = example.get("history", [])
-    if (not isinstance(history, list) or len(history) > 3
+    if (not isinstance(history, list) or len(history) > 20
             or any(t.get("video_id") != example["video_id"] or not isinstance(t.get("question"), str)
                    or not isinstance(t.get("answer"), str) for t in history)):
         raise ValueError("Fixture history must be bounded and from the same video.")
@@ -133,10 +133,11 @@ def preflight(examples, snapshots, baseline, candidate, embedding, chat, judge, 
             # Resolver output is capped at 2,000 characters (at most 8,000 UTF-8 bytes).
             if embedding["model"] != LOCAL_EMBEDDING_MODEL:
                 plans.append((embedding["model"], 8016, 0))
+            # complete_json serializes the JSON payload inside the message envelope.
+            history_bytes = len(json.dumps(json.dumps(conversation_context(e.get("history", [])))).encode())
             if e.get("history"):
-                plans.append((chat["model"], 100000, 300))
+                plans.append((chat["model"], 40000 + history_bytes, 300))
             if mode == "system":
-                history_bytes = len(json.dumps(conversation_context(e.get("history", []))).encode())
                 plans.append((chat["model"], 40000 + history_bytes + config.context_tokens * 6, 1200))
                 gold_bytes = len(json.dumps([asdict(s) for s in snapshots[e["source_version"]].segments
                                            if any(s.id in g for g in e["evidence_sets"])]).encode())

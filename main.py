@@ -138,8 +138,13 @@ with left:
     st.chat_input("Ask about this video", key="question_input", on_submit=submit_message,
                   disabled=bool(submission and submission["status"] in {"pending", "processing", "failed", "awaiting_refresh"}))
 
+    if session.removed_exchanges:
+        count = session.removed_exchanges
+        st.info(f"{count} older exchange{'s' if count != 1 else ''} removed. Only the latest 20 exchanges remain available. "
+                "Please restate any content from removed exchanges.")
     for turn in session.history:
         with st.chat_message("user"):
+            st.caption(f"Exchange {turn['exchange_number']}")
             st.write(turn["question"])
         with st.chat_message("assistant"):
             result = turn["result"]

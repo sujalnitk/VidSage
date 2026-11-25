@@ -26,6 +26,7 @@ class Session:
     pending_refresh: object = None
     refresh_base: object = field(default=None, repr=False)
     history: list = field(default_factory=list)
+    removed_exchanges: int = 0
     requests: dict = field(default_factory=dict)
     lock: object = field(default_factory=RLock, repr=False)
 
@@ -37,6 +38,7 @@ class Session:
             self.pending_refresh = None
             self.refresh_base = None
             self.history.clear()
+            self.removed_exchanges = 0
             # Keep bounded request tombstones so old submissions cannot become new turns.
             self.requests = {key: (fingerprint, None) for key, (fingerprint, _) in self.requests.items()}
 
@@ -203,9 +205,11 @@ def ask_question(session, prepared_id, question, request_id, chat_config, embedd
                 except Exception:
                     raise PipelineError("trace_storage", "The opted-in trace could not be retained; no turn was completed.") from None
         session.requests[request_id] = (fingerprint, result)
-        session.history.append({"request_id": request_id, "video_id": prepared.snapshot.video_id,
+        session.history.append({"exchange_number": session.removed_exchanges + len(session.history) + 1,
+                                "request_id": request_id, "video_id": prepared.snapshot.video_id,
                                 "question": redact(question, secrets), "answer": result.answer, "result": asdict(result),
                                 "consent": bool(consent), "ts": datetime.now(timezone.utc).isoformat()})
+        session.removed_exchanges += max(0, len(session.history) - 20)
         del session.history[:-20]
         return result
 

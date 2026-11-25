@@ -152,6 +152,23 @@ class EvaluationTests(unittest.TestCase):
         self.embed.assert_not_called()
         self.complete.assert_not_called()
 
+    def test_twenty_full_exchanges_fit_their_preflight_reservation(self):
+        def provider(messages, **kwargs):
+            if "Grade an answer" in messages[0]["content"]:
+                return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(
+                    {key: 1 for key in ("correctness", "support", "completeness", "abstention", "timing")})))])
+            return completion(messages, **kwargs)
+        self.complete.side_effect = provider
+        self.examples[0]["history"] = [{"video_id": self.source.video_id,
+            "question": f"Topic {i}", "answer": "\\\"界" * 10000} for i in range(20)]
+        for mode, attempts in (("retrieval", 6), ("system", 10)):
+            with self.subTest(mode=mode):
+                report = self.run_experiment(mode=mode)
+                self.assertTrue(report["complete"], report.get("failure_category"))
+                self.assertLessEqual(report["consumed_reservation_usd"], report["reserved_usd"])
+                self.assertEqual(report["maximum_attempts"], attempts)
+                self.assertEqual(len(report["usage"]), attempts)
+
     def test_invalid_judge_marks_comparison_incomplete(self):
         def invalid(messages, **kwargs):
             if "Grade an answer" in messages[0]["content"]:

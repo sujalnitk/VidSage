@@ -14,7 +14,7 @@ Prepared data lives in the session and is reusable across questions. Model, endp
 
 `ask_question` requires session, conversation, prepared-video and request identity. It checks ownership/profile compatibility and deduplicates completed submissions. Failed requests remain tombstones so automatic resubmission cannot silently repeat paid work. One session lock serializes requests; one process semaphore bounds provider concurrency.
 
-The LangGraph flow is `resolve → retrieve → generate → validate`. Question resolution uses at most three same-video turns, each bounded, and can ask for clarification. Dense retrieval explicitly requests `k=4`; the initial retrieval candidate uses `k=8`. Context assembly removes overlapping source spans and enforces a conservative byte/token budget while keeping exact source IDs and text.
+The LangGraph flow is `resolve → retrieve → generate → validate`. Question resolution and generation use the full text of the latest 20 retained same-video exchanges with stable numbering, and resolution asks for clarification or restatement when a reference is ambiguous or unavailable. Dense retrieval explicitly requests `k=4`; the initial retrieval candidate uses `k=8`. Context assembly removes overlapping source spans and enforces a conservative byte/token budget while keeping exact source IDs and text.
 
 Generation returns JSON claims and evidence references, or an insufficient-context outcome. The validator rejects malformed outcomes, unknown IDs and inexact excerpts. The backend constructs timestamp links from original captions. It cannot prove semantic support from string matching: correctness and claim support require independent judging and human review.
 

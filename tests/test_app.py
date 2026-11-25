@@ -246,6 +246,66 @@ class ProviderAppTests(unittest.TestCase):
         self.assertEqual(len(session.history), 1)
         self.assertEqual(calls, (self.fetch.call_count, self.embed.call_count))
 
+    def open_video(self, app):
+        field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ").run()
+        for button in app.button:
+            if button.label == "Open video":
+                button.click().run()
+                break
+        return app
+
+    def test_older_visible_exchange_and_full_answer_remain_usable(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = self.open_video(self.app())
+        long_answer = "A detailed explanation. " * 100 + "The final point is retrieval."
+        normal_response = self.complete.return_value
+        payload = {"outcome": "answered", "claims": [{"text": long_answer,
+                   "evidence": [{"source_id": "S1", "excerpt": "retrieval augmented generation"}]}]}
+        self.complete.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+        app.chat_input[0].set_value("Explain the first topic").run()
+        self.complete.return_value = normal_response
+        for i in range(4):
+            app.chat_input[0].set_value(f"Next topic {i}").run()
+        self.complete.reset_mock()
+        app.chat_input[0].set_value("Simplify the final point in exchange 1").run()
+        self.assertFalse(app.error)
+        self.assertEqual(len(app.chat_message), 12)
+        self.assertIn(long_answer, [message.markdown[0].value for message in app.chat_message])
+        for call in self.complete.call_args_list:
+            supplied = json.loads(call.kwargs["messages"][-1]["content"])
+            self.assertEqual(supplied["history"][0]["question"], "Explain the first topic")
+            self.assertEqual(supplied["history"][0]["answer"], long_answer)
+            self.assertEqual(supplied["question"], "Simplify the final point in exchange 1")
+
+    def test_pruning_preserves_exchange_numbers_and_removed_reference_asks_restatement(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = self.open_video(self.app())
+        for i in range(1, 22):
+            app.chat_input[0].set_value(f"Topic {i}").run()
+        self.assertFalse(app.error)
+        self.assertEqual(len(app.chat_message), 40)
+        self.assertEqual(app.chat_message[0].markdown[0].value, "Topic 2")
+        self.assertIn("Exchange 2", [item.value for item in app.chat_message[0].caption])
+        self.assertTrue(any("1 older exchange" in item.value and "removed" in item.value
+                            for item in app.info))
+        self.assertEqual(app.session_state["history"][0]["exchange_number"], 2)
+        self.assertEqual(app.session_state["history"][-1]["exchange_number"], 21)
+        self.assertTrue(app.get("download_button"))
+        self.assertTrue(app.get("link_button"))
+        def clarify_removed(**kwargs):
+            supplied = json.loads(kwargs["messages"][-1]["content"])
+            self.assertEqual(supplied["history"][0]["exchange_number"], 2)
+            self.assertEqual(supplied["history"][-1]["exchange_number"], 21)
+            self.assertNotIn("Topic 1", [turn["question"] for turn in supplied["history"]])
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({
+                "query": None, "clarification": "Exchange 1 was removed. Please restate the relevant content."})))])
+        self.complete.side_effect = clarify_removed
+        app.chat_input[0].set_value("Simplify exchange 1").run()
+        self.assertFalse(app.error)
+        self.assertEqual(app.chat_message[-1].markdown[0].value,
+                         "Exchange 1 was removed. Please restate the relevant content.")
+        self.assertEqual(len(app.session_state["history"]), 20)
+
     def test_starts_without_credentials_and_validates_before_external_calls(self):
         app = ask(self.app())
         self.assertFalse(app.exception)
