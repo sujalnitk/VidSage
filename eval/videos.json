@@ -1,0 +1,13 @@
+{
+  "channel": "Veritasium",
+  "selected_on": "2026-11-25",
+  "status": "sources selected; English caption availability must be checked by freeze",
+  "videos": [
+    {"id": "nmgFG7PUHfo", "title": "The Most Underrated Algorithm", "topic": "Fast Fourier Transform", "split": "development", "url": "https://www.youtube.com/watch?v=nmgFG7PUHfo"},
+    {"id": "-UrdExQW0cs", "title": "What makes quantum computers SO powerful?", "topic": "Shor's algorithm and cryptography", "split": "development", "url": "https://www.youtube.com/watch?v=-UrdExQW0cs"},
+    {"id": "HeQX2HjkcNo", "title": "Math's Fundamental Flaw", "topic": "Incompleteness and computability", "split": "development", "url": "https://www.youtube.com/watch?v=HeQX2HjkcNo"},
+    {"id": "mScpHTIi-kM", "title": "Once you understand game theory, you understand the world.", "topic": "Prisoner's dilemma", "split": "development", "url": "https://www.youtube.com/watch?v=mScpHTIi-kM"},
+    {"id": "R13BD8qKeTg", "title": "The Bayesian Trap", "topic": "Bayesian reasoning", "split": "heldout", "url": "https://www.youtube.com/watch?v=R13BD8qKeTg"},
+    {"id": "uXuQF_PPg5U", "title": "The World Depends on Random Numbers That Aren't Really Random", "topic": "Random number generation", "split": "heldout", "url": "https://www.youtube.com/watch?v=uXuQF_PPg5U"}
+  ]
+}

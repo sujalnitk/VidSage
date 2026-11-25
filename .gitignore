@@ -14,3 +14,7 @@ wheels/
 .env.*
 !.env.example
 .streamlit/secrets.toml
+
+# Private pilot captions, evaluation data, traces, and reports
+.vidsage/
+eval/local/

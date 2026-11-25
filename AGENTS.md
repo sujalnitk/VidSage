@@ -9,12 +9,16 @@
 
 ## Project map
 
-- `main.py` contains `AgentState`, transcript fetching/chunking/retrieval in `fetch_transcript`, provider-independent prompting in `our_agent`, the LangGraph graph, and the Streamlit UI.
-- `llm.py` validates model/credential/endpoint settings and adapts LiteLLM embeddings to LangChain's interface. `litellm-core` supplies both chat and embedding provider support; do not install the overlapping `litellm` distribution alongside it.
-- The graph runs `START -> preprocess -> agent -> END` for each submitted question.
-- FAISS indexes are rebuilt per question. History lives only in Streamlit session state and is not passed to the model as conversational memory.
-- `pyproject.toml` declares dependencies; `uv.lock` pins them; `.python-version` selects Python 3.11.
-- The README records setup, observed behavior, and unresolved baseline issues. Check it before assuming an issue is new.
+- `main.py` contains Streamlit inputs, answer/citation display, session controls, and feedback consent. It calls the backend; no model settings are exposed to visitors.
+- `backend/schemas.py` defines shared immutable contracts and the allowlisted configuration catalog. `backend/ingestion.py`, `indexing.py`, `retrieval.py`, and `answering.py` contain independently testable stages.
+- `backend/service.py` exposes `prepare_video`, `ask_question`, and `record_feedback`. Its question graph is `START -> resolve -> retrieve -> generate -> validate -> END`.
+- `backend/store.py` owns SQLite retention, reviewed examples, quotas, comparison reports, selection, and rollback. `backend/evaluation.py` and `python -m backend` implement owner-triggered experiments. See `docs/evaluation.md` for the workflow and remaining release gates.
+- `local_embeddings.py` runs pinned MiniLM with ONNX Runtime; `llm.py` lazily caches the CPU model for `local/all-MiniLM-L6-v2` (no key/endpoint); local chunks must stay within 256 tokens with their original source spans preserved. Local usage has zero API cost and is excluded from paid reservations.
+- `llm.py` validates independent model/credential/endpoint settings and adapts LiteLLM embeddings. `litellm-core` supplies chat and embeddings; do not install the overlapping `litellm` distribution.
+- FAISS indexes live in one session/conversation, hold no credential-bearing adapter, and are reused across questions. Publication is atomic; a failed same-video refresh preserves the ready index. History is limited to 20 turns; the resolver sees three bounded same-video turns.
+- `pyproject.toml` declares dependencies; `uv.lock` pins them; `.python-version` selects Python 3.11. Reuse installed packages and the standard library.
+- `eval/videos.json` selects six Veritasium sources. Real captions/datasets/reports and SQLite belong only in Git-ignored `eval/local/` and `.vidsage/`; committed fixtures are synthetic. Human review is required for reference examples and changed judge outcomes.
+- The README records verified setup, architecture, limits, and unresolved release gates. `docs/product-design.md` is product context; `docs/backend-pipeline-plan.md` describes the implemented boundaries and pending validation.
 
 ## Environment and secrets
 
@@ -31,11 +35,25 @@
 
 ## Validation
 
-- Run `uv pip check`, `uv run --locked python -m compileall -q main.py llm.py tests`, and `uv run --locked python -m unittest discover -s tests -v`.
+- Run `uv pip check`, `uv run --locked python -m compileall -q main.py llm.py local_embeddings.py backend tests`, and `uv run --locked python -m unittest discover -s tests -v`.
+- `tests/test_pipeline.py` checks independent stages and service integration; `tests/test_learning.py` checks retention, experiment budgets, review gates, selection and rollback.
 - `tests/test_app.py` uses Streamlit `AppTest` for startup, dotenv loading/precedence, input validation, server provider routing, and credential isolation. Mock the dotenv loader by default and use temporary fixtures for loading tests; never read a developer's actual `.env`. `tests/test_llm.py` covers configuration, embedding batching, and response ordering. Add a focused regression check for changed behavior.
+- Keep paid experiments owner-triggered and outside CI. Require verified prices, reserve all attempts before calls, keep the $5 ceiling, and retain reservations when actual cost is unknown. Pilot mode requires a server rate card.
 - Mock YouTube transcript fetching and LiteLLM completion/embedding calls for local checks. Placeholder keys cannot validate real service access or model availability.
 - Check input validation, successful answers/history, and displayed failures when changing the Q&A flow. Check widget/session-state behavior when changing clear or download actions.
 - A healthy `/_stcore/health` endpoint proves the server is listening; verify script execution separately. Report live checks and mocked checks distinctly.
+
+## Agent skills
+
+### Issue tracker
+
+Specifications and tickets live in `.scratch/<feature>/`.
+See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context: root `GLOSSARY.md` and `docs/adr/`.
+See `docs/agents/domain.md`.
 
 ## Git workflow
 

@@ -1,0 +1,18 @@
+name: Deterministic checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: '3.11'
+      - run: uv sync --locked
+      - run: uv pip check
+      - run: uv run --locked python -m compileall -q main.py llm.py local_embeddings.py backend tests
+      - run: uv run --locked python -m unittest discover -s tests -v
