@@ -2,19 +2,26 @@ from time import perf_counter
 
 import faiss
 import numpy as np
+from llm import LOCAL_EMBEDDING_MODEL, LOCAL_REVISION
 
 from .schemas import Chunk, ChunkPolicy, EmbeddingProfile, PipelineError, PreparedVideo, SourceSpan, version
 
 
-def chunk_transcript(snapshot, policy=ChunkPolicy()):
+def chunk_transcript(snapshot, policy=ChunkPolicy(), tokenizer=None):
     text = " ".join(s.text for s in snapshot.segments)
     offsets, cursor = [], 0
     for segment in snapshot.segments:
         offsets.append((cursor, cursor + len(segment.text), segment))
         cursor += len(segment.text) + 1
     chunks = []
-    for begin in range(0, len(text), policy.size - policy.overlap):
+    begin = 0
+    while begin < len(text):
         end = min(begin + policy.size, len(text))
+        if tokenizer is not None:
+            tokens = tokenizer(text[begin:end], add_special_tokens=False, return_offsets_mapping=True)
+            while len(tokens["input_ids"]) > 254:
+                end = begin + tokens["offset_mapping"][253][1]
+                tokens = tokenizer(text[begin:end], add_special_tokens=False, return_offsets_mapping=True)
         covered = [(a, b, s) for a, b, s in offsets if a < end and b > begin]
         if covered:
             spans = tuple(SourceSpan(s.id, max(begin - a, 0), min(end, b) - a) for a, b, s in covered)
@@ -23,10 +30,13 @@ def chunk_transcript(snapshot, policy=ChunkPolicy()):
                                 min(s.start for _, _, s in covered), max(s.end for _, _, s in covered)))
         if end == len(text):
             break
+        begin = max(begin + 1, end - policy.overlap)
     return tuple(chunks)
 
 
 def embedding_profile(config):
+    if config["model"] == LOCAL_EMBEDDING_MODEL:
+        return EmbeddingProfile(config["model"], revision=LOCAL_REVISION, normalization="l2")
     return EmbeddingProfile(config["model"], config.get("api_base"))
 
 
@@ -43,7 +53,7 @@ def vector_matrix(vectors, count, dimension=None):
 
 def build_index(snapshot, policy, profile, embeddings, session_id, conversation_id):
     started = perf_counter()
-    chunks = chunk_transcript(snapshot, policy)
+    chunks = chunk_transcript(snapshot, policy, embeddings.tokenizer)
     if not chunks or len(chunks) > 2000:
         raise PipelineError("chunk_limit", "The caption track exceeds the pilot's chunk limit.")
     vectors = vector_matrix(embeddings.embed_documents([c.text for c in chunks]), len(chunks))

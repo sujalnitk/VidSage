@@ -7,7 +7,7 @@ from statistics import mean
 from time import perf_counter
 from uuid import uuid4
 
-from llm import ModelEmbeddings
+from llm import ModelEmbeddings, LOCAL_EMBEDDING_MODEL
 from .answering import ANSWER_SCHEMA, PROMPTS, complete_json, generate_answer, resolve_query, validate_citations
 from .budget import Meter, PROVIDER_SLOTS
 from .indexing import build_index, chunk_transcript, embedding_profile
@@ -125,13 +125,14 @@ def judge_answer(example, result, snapshot, config, usage, meter):
 def preflight(examples, snapshots, baseline, candidate, embedding, chat, judge, rates, mode):
     plans = []
     for config in (baseline, candidate):
-        for source in {e["source_version"] for e in examples}:
+        for source in ({e["source_version"] for e in examples} if embedding["model"] != LOCAL_EMBEDDING_MODEL else ()):
             chunks = chunk_transcript(snapshots[source], config.chunk_policy)
             for start in range(0, len(chunks), 96):
                 plans.append((embedding["model"], sum(len(c.text.encode()) + 16 for c in chunks[start:start + 96]), 0))
         for e in examples:
             # Resolver output is capped at 2,000 characters (at most 8,000 UTF-8 bytes).
-            plans.append((embedding["model"], 8016, 0))
+            if embedding["model"] != LOCAL_EMBEDDING_MODEL:
+                plans.append((embedding["model"], 8016, 0))
             if e.get("history"):
                 plans.append((chat["model"], 100000, 300))
             if mode == "system":
@@ -142,7 +143,7 @@ def preflight(examples, snapshots, baseline, candidate, embedding, chat, judge, 
     if any(model not in rates for model, _, _ in plans):
         raise ValueError("Preflight needs verified rates for every model, including the judge.")
     total = sum(rates[model].upper_cost(input_bytes, output) for model, input_bytes, output in plans)
-    if not 0 < total <= 5:
+    if not 0 <= total <= 5:
         raise ValueError(f"The entire comparison cannot fit its $5 ceiling (reserved ${total:.4f}).")
     return total, len(plans)
 

@@ -1,11 +1,23 @@
 import os
 import math
 from urllib.parse import urlsplit
+from functools import lru_cache
+from threading import RLock
 
 import litellm
 from langchain_core.embeddings import Embeddings
 
 litellm.suppress_debug_info = True
+
+LOCAL_EMBEDDING_MODEL = "local/all-MiniLM-L6-v2"
+LOCAL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+_LOCAL_LOCK = RLock()
+
+
+@lru_cache(maxsize=1)
+def local_model():
+    from local_embeddings import MiniLM
+    return MiniLM(LOCAL_REVISION)
 
 
 def model_config(model: str, api_key: str, base_url: str = "") -> dict:
@@ -18,6 +30,10 @@ def model_config(model: str, api_key: str, base_url: str = "") -> dict:
         if (url.scheme not in ("http", "https") or not url.hostname
                 or url.username or url.password or url.query or url.fragment):
             raise ValueError("Endpoint URL must be an HTTP(S) URL without credentials, query, or fragment.")
+    if provider == "local":
+        if model != LOCAL_EMBEDDING_MODEL or base_url:
+            raise ValueError("Use local/all-MiniLM-L6-v2 without an endpoint for local embeddings.")
+        return {"model": model, "api_key": None, "api_base": None}
     api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY", "").strip()
     if provider == "gemini":
         api_key = api_key or os.getenv("GOOGLE_API_KEY", "").strip()
@@ -32,7 +48,27 @@ class ModelEmbeddings(Embeddings):
         self.meter = meter
         self.usage = usage
 
+    @property
+    def tokenizer(self):
+        if self.config["model"] == LOCAL_EMBEDDING_MODEL:
+            with _LOCAL_LOCK:
+                return local_model().tokenizer
+        return None
+
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if self.config["model"] == LOCAL_EMBEDDING_MODEL:
+            if not texts:
+                return []
+            with _LOCAL_LOCK:
+                model = local_model()
+                lengths = model.tokenizer(texts, truncation=False, padding=False)["input_ids"]
+                if any(len(tokens) > model.max_seq_length for tokens in lengths):
+                    raise ValueError("MiniLM input exceeds 256 tokens. Shorten the question or split the document.")
+                vectors = model.encode(texts).tolist()
+            if self.usage is not None:
+                self.usage.append({"kind": "embedding", "model": LOCAL_EMBEDDING_MODEL,
+                                   "prompt_tokens": sum(map(len, lengths)), "cost_usd": 0.0})
+            return vectors
         vectors = []
         dimension = None
         # Keep batches within Cohere's 96-input limit and Google's 100-input limit.
@@ -77,5 +113,7 @@ def server_configs():
     model = os.getenv("EMBEDDING_MODEL", default).strip()
     endpoint = os.getenv("EMBEDDING_BASE_URL", "").strip()
     shared = chat["api_key"] if model.partition("/")[0] == provider and endpoint == (chat["api_base"] or "") else ""
+    if model == LOCAL_EMBEDDING_MODEL:
+        return chat, model_config(model, "", endpoint)
     embedding = model_config(model, os.getenv("EMBEDDING_API_KEY", "").strip() or shared, endpoint)
     return chat, embedding

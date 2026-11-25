@@ -13,6 +13,7 @@
 - `backend/schemas.py` defines shared immutable contracts and the allowlisted configuration catalog. `backend/ingestion.py`, `indexing.py`, `retrieval.py`, and `answering.py` contain independently testable stages.
 - `backend/service.py` exposes `prepare_video`, `ask_question`, and `record_feedback`. Its question graph is `START -> resolve -> retrieve -> generate -> validate -> END`.
 - `backend/store.py` owns SQLite retention, reviewed examples, quotas, comparison reports, selection, and rollback. `backend/evaluation.py` and `python -m backend` implement owner-triggered experiments. See `docs/evaluation.md` for the workflow and remaining release gates.
+- `local_embeddings.py` runs pinned MiniLM with ONNX Runtime; `llm.py` lazily caches the CPU model for `local/all-MiniLM-L6-v2` (no key/endpoint); local chunks must stay within 256 tokens with their original source spans preserved. Local usage has zero API cost and is excluded from paid reservations.
 - `llm.py` validates independent model/credential/endpoint settings and adapts LiteLLM embeddings. `litellm-core` supplies chat and embeddings; do not install the overlapping `litellm` distribution.
 - FAISS indexes live in one session/conversation, hold no credential-bearing adapter, and are reused across questions. Publication is atomic; a failed same-video refresh preserves the ready index. History is limited to 20 turns; the resolver sees three bounded same-video turns.
 - `pyproject.toml` declares dependencies; `uv.lock` pins them; `.python-version` selects Python 3.11. Reuse installed packages and the standard library.
@@ -34,7 +35,7 @@
 
 ## Validation
 
-- Run `uv pip check`, `uv run --locked python -m compileall -q main.py llm.py backend tests`, and `uv run --locked python -m unittest discover -s tests -v`.
+- Run `uv pip check`, `uv run --locked python -m compileall -q main.py llm.py local_embeddings.py backend tests`, and `uv run --locked python -m unittest discover -s tests -v`.
 - `tests/test_pipeline.py` checks independent stages and service integration; `tests/test_learning.py` checks retention, experiment budgets, review gates, selection and rollback.
 - `tests/test_app.py` uses Streamlit `AppTest` for startup, dotenv loading/precedence, input validation, server provider routing, and credential isolation. Mock the dotenv loader by default and use temporary fixtures for loading tests; never read a developer's actual `.env`. `tests/test_llm.py` covers configuration, embedding batching, and response ordering. Add a focused regression check for changed behavior.
 - Keep paid experiments owner-triggered and outside CI. Require verified prices, reserve all attempts before calls, keep the $5 ceiling, and retain reservations when actual cost is unknown. Pilot mode requires a server rate card.

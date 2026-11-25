@@ -30,4 +30,4 @@ The owner locks a candidate on development examples before held-out execution. T
 
 ## Remaining validation
 
-All six selected English caption tracks were fetched locally. Human review of the drafts, real retrieval/generation/judging, hosted caption reliability and actual request/spend/cleanup behavior still need verification. Embedding credentials and owner-verified rates are absent in this workspace. A health endpoint alone does not validate script execution or these service gates.
+All six selected English caption tracks were fetched locally. Human review of the drafts, real retrieval/generation/judging, hosted caption reliability and actual request/spend/cleanup behavior still need verification. Local MiniLM embeddings and Groq chat are configured; human dataset review and owner-verified experiment rates remain pending. A health endpoint alone does not validate script execution or these service gates.

@@ -37,11 +37,11 @@ def load_rates(path):
 
 class Meter:
     def __init__(self, rates, allowance, max_attempts=100):
-        if not 0 < allowance <= 5 or not math.isfinite(allowance):
-            raise ValueError("A paid run must reserve between $0 and $5.")
+        if not 0 <= allowance <= 5 or not math.isfinite(allowance):
+            raise ValueError("A run must reserve between $0 and $5.")
         self.rates, self.allowance, self.reserved = rates, allowance, 0.0
-        if not isinstance(max_attempts, int) or max_attempts < 1:
-            raise ValueError("Reserve a positive number of provider attempts.")
+        if not isinstance(max_attempts, int) or max_attempts < 0:
+            raise ValueError("Reserve a nonnegative number of provider attempts.")
         self.max_attempts = max_attempts
         self.calls = []
 

@@ -40,7 +40,7 @@ The report includes Recall@k (support hit rate), reciprocal rank, and required-e
 uv run --locked python -m backend report REPORT_ID
 ```
 
-Reports stay in local SQLite. A real baseline has not yet run in this workspace because embedding credentials and verified rates are absent. The tests exercise retrieval metrics with deterministic embeddings; those results are not evidence of real retrieval quality.
+Reports stay in local SQLite. A real baseline has not yet run in this workspace because human dataset review and verified experiment rates are still pending. The tests exercise retrieval metrics with deterministic embeddings; those results are not evidence of real retrieval quality.
 
 ## Review feedback and add a regression
 

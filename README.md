@@ -61,7 +61,11 @@ Keep `.env` local and place the server's own file on each deployment. Some cloud
 
 For Groq, use `LLM_MODEL=groq/openai/gpt-oss-120b` and put the Groq key in `LLM_API_KEY` or `GROQ_API_KEY`. Leave `LLM_BASE_URL` blank for the native endpoint. Available models depend on the account; check the [Groq model catalog](https://console.groq.com/docs/models).
 
-Transcript embeddings are configured independently. If the Groq account has no embedding model, configure a separate embedding provider, for example `EMBEDDING_MODEL=gemini/gemini-embedding-001` and a Google key in `EMBEDDING_API_KEY`. A Groq chat key cannot authenticate Google or OpenAI embeddings. Until an embedding provider/key is available, the app opens but video Q&A stops at configuration validation. Local embedding models are not installed by default.
+Transcript embeddings run locally when `EMBEDDING_MODEL=local/all-MiniLM-L6-v2`. Leave `EMBEDDING_API_KEY` and `EMBEDDING_BASE_URL` blank. The selected setup uses Groq for chat and MiniLM for embeddings; no Google embedding key is needed.
+
+`uv sync --locked` installs ONNX Runtime, Hugging Face Hub and the tokenizer runtime. First use downloads the pinned public model revision (about 91 MB of weights, plus tokenizer/config files) into the normal Hugging Face cache. Dependencies and runtime RAM add overhead beyond the weights. Subsequent runs reuse the cached model, and embedding inference needs no network or API key. The adapter loads one model per application process, serializes its use, uses the ONNX CPU runtime with one inference thread, avoiding the native FAISS/PyTorch conflict observed on M1, batches at 32 texts, and emits normalized 384-dimensional vectors.
+
+MiniLM supports English input up to 256 tokens including special tokens. Preparation splits character windows further using tokenizer offsets when needed, retaining exact source spans/timestamps. Overlong questions fail with a shortening instruction instead of silently losing text. Local embedding usage records zero API cost and consumes no paid-provider attempts; experiments still budget Groq generation/resolution/judging. Hosted embedding configurations remain supported and keep independent credentials.
 
 ## How it runs
 
@@ -77,9 +81,10 @@ Transcript embeddings are configured independently. If the Groq account has no e
 | `backend/service.py` | `prepare_video`, `ask_question`, `record_feedback`; ownership, reuse, request deduplication and LangGraph orchestration |
 | `backend/store.py` | Local SQLite consent, feedback, reviewed examples, quotas, reports, selected version and rollback |
 | `backend/evaluation.py` | Frozen JSONL datasets, retrieval metrics, semantic judging and paired comparisons |
-| `llm.py` | Independent server provider configuration and LiteLLM embedding batching/validation |
+| `llm.py` | Independent provider configuration, hosted embedding validation, and local model caching |
+| `local_embeddings.py` | Pinned MiniLM tokenization, ONNX CPU inference, masked mean pooling and normalization |
 
-Preparation preserves caption timing, generated-track status, language and content-derived source identity. Chunks start at 1,000 characters with 200 overlap; split captions retain their original available time range. Indexes hold vectors and source mappings, never credential-bearing clients. A second question fetches no captions and embeds no documents. A failed refresh keeps the previous ready artifact for that same video.
+Preparation preserves caption timing, generated-track status, language and content-derived source identity. Chunks start at 1,000 characters with 200 overlap and shrink to the local model’s token limit when necessary; split captions retain their original available time range. Indexes hold vectors and source mappings, never credential-bearing clients. A second question fetches no captions and embeds no documents. A failed refresh keeps the previous ready artifact for that same video.
 
 Questions run `resolve → retrieve → generate → validate` through LangGraph. The resolver sees the last three same-video turns (bounded to 2,000 characters each). Context is limited to 4,096 UTF-8 bytes as a conservative token bound. Answers must cite exact excerpts from supplied source IDs; unsupported questions produce an insufficient-context result. Structural citation checks cannot establish that the excerpt logically supports the claim; the judge and human review address that separately.
 
@@ -111,7 +116,7 @@ uv run --locked python -m backend freeze
 uv run --locked python -m backend draft-dataset
 ```
 
-The six sources are selected from Veritasium in [eval/videos.json](eval/videos.json), with four development videos and two held-out videos. All six English tracks were fetched successfully on this local machine on November 25, 2026. Frozen captions and 60 source-linked, **unreviewed** drafts are in Git-ignored `eval/local/` in this workspace. Six drafts use clearly marked synthetic caption-injection variants. No real provider experiment has run: embedding credentials and verified rates are not configured. No draft is a gold example until a human reviews it.
+The six sources are selected from Veritasium in [eval/videos.json](eval/videos.json), with four development videos and two held-out videos. All six English tracks were fetched successfully on this local machine on November 25, 2026. Frozen captions and 60 source-linked, **unreviewed** drafts are in Git-ignored `eval/local/` in this workspace. Six drafts use clearly marked synthetic caption-injection variants. No real provider experiment has run: the real dataset still needs human review and experiments need verified rates. No draft is a gold example until a human reviews it.
 
 Release gates still open: human review of the 60 questions/evidence labels, a real retrieval baseline and system/judge comparison, judge calibration, a hosted caption check, provider smoke test and verification of spend/request limits and daily cleanup on the actual host. A local caption success does not establish hosted reliability.
 
@@ -119,7 +124,7 @@ Release gates still open: human review of the 60 questions/evidence labels, a re
 
 ```bash
 uv pip check
-uv run --locked python -m compileall -q main.py llm.py backend tests
+uv run --locked python -m compileall -q main.py llm.py local_embeddings.py backend tests
 uv run --locked python -m unittest discover -s tests -v
 ```
 
