@@ -53,7 +53,7 @@ class FollowupServiceTests(unittest.TestCase):
         result = self.ask("Simplify your second point")
         payload = json.loads(self.complete.call_args.kwargs["messages"][-1]["content"])
         self.assertEqual(payload["question"], "Simplify your second point")
-        self.assertEqual(payload["history"], [{"question": "Explain the two points", "answer": original}])
+        self.assertEqual(payload["history"], [{"exchange_number": 1, "question": "Explain the two points", "answer": original}])
         self.assertEqual(payload["retrieval_query"], "Search limitations")
         self.assertEqual(result.answer, "Search may miss useful text.")
         self.assertEqual(result.claims[0].citations[0].url, "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=4s")
@@ -164,4 +164,4 @@ class FollowupEvaluationTests(unittest.TestCase):
         for payload in generation:
             self.assertEqual(payload["question"], "When does that fail?")
             self.assertEqual(payload["retrieval_query"], "RAG limitations")
-            self.assertEqual(payload["history"], [{"question": "Explain RAG", "answer": "RAG retrieves passages."}])
+            self.assertEqual(payload["history"], [{"exchange_number": 1, "question": "Explain RAG", "answer": "RAG retrieves passages."}])
