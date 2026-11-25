@@ -136,7 +136,7 @@ def preflight(examples, snapshots, baseline, candidate, embedding, chat, judge, 
             if e.get("history"):
                 plans.append((chat["model"], 100000, 300))
             if mode == "system":
-                plans.append((chat["model"], 40000 + config.context_tokens * 6, 1200))
+                plans.append((chat["model"], 110000 + config.context_tokens * 6, 1200))
                 gold_bytes = len(json.dumps([asdict(s) for s in snapshots[e["source_version"]].segments
                                            if any(s.id in g for g in e["evidence_sets"])]).encode())
                 plans.append((judge["model"], 100000 + gold_bytes, 300))
@@ -216,7 +216,8 @@ def experiment(examples, snapshots, candidate_name, embedding_config, chat_confi
                     row = {"retrieval": retrieval_metrics(passages, e), "passages": [asdict(p) for p in passages],
                            "cold_preparation_seconds": prepared.preparation_seconds if cold else None}
                     if mode == "system":
-                        draft = generate_answer(query, context, chat_config, config.prompt, report["usage"], meter)
+                        draft = generate_answer(e["question"], context, chat_config, config.prompt, report["usage"], meter,
+                                                history=e.get("history", []), retrieval_query=query)
                         result = validate_citations(draft, context, prepared, e["id"], config.version)
                         row["answer"] = asdict(result)
                         row["quality"] = judge_answer(e, result, source, judge_config, report["usage"], meter)

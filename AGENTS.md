@@ -11,7 +11,7 @@
 
 - `main.py` contains chronological Streamlit chat, submission identity, answer/citation display, session controls, and feedback consent. It calls the backend; no model settings are exposed to visitors.
 - `backend/schemas.py` defines shared immutable contracts and the allowlisted configuration catalog. `backend/ingestion.py`, `indexing.py`, `retrieval.py`, and `answering.py` contain independently testable stages.
-- `backend/service.py` exposes `prepare_video`, `ask_question`, and `record_feedback`. Its question graph is `START -> resolve -> retrieve -> generate -> validate -> END`.
+- `backend/service.py` exposes `prepare_video`, `ask_question`, and `record_feedback`. Its question graph is `START -> resolve -> retrieve -> generate -> validate -> END`. Generation preserves the original message and bounded same-video context alongside the retrieval query; prior replies never count as caption evidence.
 - `backend/store.py` owns SQLite retention, reviewed examples, quotas, comparison reports, selection, and rollback. `backend/evaluation.py` and `python -m backend` implement owner-triggered experiments. See `docs/evaluation.md` for the workflow and remaining release gates.
 - `local_embeddings.py` runs pinned MiniLM with ONNX Runtime; `llm.py` lazily caches the CPU model for `local/all-MiniLM-L6-v2` (no key/endpoint); local chunks must stay within 256 tokens with their original source spans preserved. Local usage has zero API cost and is excluded from paid reservations.
 - `llm.py` validates independent model/credential/endpoint settings and adapts LiteLLM embeddings. `litellm-core` supplies chat and embeddings; do not install the overlapping `litellm` distribution.
