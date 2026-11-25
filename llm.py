@@ -1,4 +1,5 @@
 import os
+import math
 from urllib.parse import urlsplit
 
 import litellm
@@ -26,20 +27,55 @@ def model_config(model: str, api_key: str, base_url: str = "") -> dict:
 
 
 class ModelEmbeddings(Embeddings):
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, meter=None, usage=None):
         self.config = config
+        self.meter = meter
+        self.usage = usage
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         vectors = []
+        dimension = None
         # Keep batches within Cohere's 96-input limit and Google's 100-input limit.
         for start in range(0, len(texts), 96):
             batch = texts[start:start + 96]
-            response = litellm.embedding(input=batch, **self.config)
-            data = sorted(response.data, key=lambda item: item["index"])
-            if [item["index"] for item in data] != list(range(len(batch))):
+            if self.meter:
+                self.meter.before("embedding", self.config["model"], sum(len(t.encode()) + 16 for t in batch))
+            response = litellm.embedding(input=batch, timeout=30, num_retries=0, **self.config)
+            if self.usage is not None:
+                usage = getattr(response, "usage", None)
+                cost = getattr(response, "_hidden_params", {}).get("response_cost")
+                self.usage.append({"kind": "embedding", "model": self.config["model"],
+                                   "prompt_tokens": getattr(usage, "prompt_tokens", None),
+                                   "cost_usd": cost if type(cost) in (int, float) and math.isfinite(cost) else None})
+            try:
+                data = sorted(response.data, key=lambda item: item["index"])
+                valid_indexes = (all(type(item["index"]) is int for item in data)
+                                 and [item["index"] for item in data] == list(range(len(batch))))
+            except (AttributeError, KeyError, TypeError):
+                valid_indexes = False
+            if not valid_indexes:
                 raise ValueError("The embedding provider returned incomplete or invalid vectors.")
-            vectors.extend(item["embedding"] for item in data)
+            for item in data:
+                vector = item.get("embedding")
+                if (not isinstance(vector, list) or not vector
+                        or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in vector)
+                        or (dimension is not None and len(vector) != dimension)):
+                    raise ValueError("The embedding provider returned incomplete or invalid vectors.")
+                dimension = len(vector)
+                vectors.append(vector)
         return vectors
 
     def embed_query(self, text: str) -> list[float]:
         return self.embed_documents([text])[0]
+
+
+def server_configs():
+    chat_model = os.getenv("LLM_MODEL", "gemini/gemini-3.8-flash").strip()
+    chat = model_config(chat_model, os.getenv("LLM_API_KEY", ""), os.getenv("LLM_BASE_URL", ""))
+    provider = chat_model.partition("/")[0]
+    default = {"gemini": "gemini/gemini-embedding-001", "openai": "openai/text-embedding-3-small"}.get(provider, "")
+    model = os.getenv("EMBEDDING_MODEL", default).strip()
+    endpoint = os.getenv("EMBEDDING_BASE_URL", "").strip()
+    shared = chat["api_key"] if model.partition("/")[0] == provider and endpoint == (chat["api_base"] or "") else ""
+    embedding = model_config(model, os.getenv("EMBEDDING_API_KEY", "").strip() or shared, endpoint)
+    return chat, embedding

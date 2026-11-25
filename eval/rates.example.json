@@ -1,0 +1,9 @@
+{
+  "verified_at": "REPLACE with date prices were verified",
+  "source": "REPLACE with provider pricing URL and any billing caveats",
+  "models": {
+    "provider/chat-model": {"input_per_million": 0.0, "output_per_million": 0.0},
+    "provider/embedding-model": {"input_per_million": 0.0, "output_per_million": 0.0},
+    "provider/judge-model": {"input_per_million": 0.0, "output_per_million": 0.0}
+  }
+}

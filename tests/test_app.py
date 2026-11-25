@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,10 +26,12 @@ class ProviderAppTests(unittest.TestCase):
         env = patch.dict(os.environ, {}, clear=True)
         env.start()
         self.addCleanup(env.stop)
+        self.directory = self.enterContext(tempfile.TemporaryDirectory())
+        os.environ["VIDSAGE_DB"] = str(Path(self.directory) / "pilot.sqlite3")
         self.load_env = self.enterContext(patch("dotenv.load_dotenv"))
         self.fetch = self.enterContext(patch(
             "youtube_transcript_api.YouTubeTranscriptApi.fetch",
-            return_value=SimpleNamespace(snippets=[SimpleNamespace(text="This video explains retrieval augmented generation.")]),
+            return_value=SimpleNamespace(language_code="en", is_generated=False, snippets=[SimpleNamespace(text="This video explains retrieval augmented generation.", start=2.5, duration=4)]),
         ))
         self.embed = self.enterContext(patch(
             "llm.litellm.embedding",
@@ -38,7 +41,7 @@ class ProviderAppTests(unittest.TestCase):
         ))
         self.complete = self.enterContext(patch(
             "llm.litellm.completion",
-            return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="The video explains RAG."))]),
+            return_value=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps({"outcome": "answered", "claims": [{"text": "The video explains RAG.", "evidence": [{"source_id": "S1", "excerpt": "retrieval augmented generation"}]}]})))]),
         ))
 
     def app(self):
@@ -153,4 +156,47 @@ class ProviderAppTests(unittest.TestCase):
         self.complete.return_value.choices[0].message.content = None
         ask(app)
         self.assertIn("no text answer", app.error[0].value)
+        self.assertEqual(app.session_state["history"], [])
+
+    def test_repeated_submit_reuses_completed_turn_and_index(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        ask(app)
+        self.assertFalse(app.error)
+        self.assertEqual(len(app.session_state["history"]), 1)
+        self.fetch.assert_called_once()
+        self.assertEqual(self.embed.call_count, 2)
+        self.complete.assert_called_once()
+
+    def test_clear_controls_and_video_switch_remove_stale_answers(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        next(b for b in app.button if b.label == "🧹 Clear History").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["history"], [])
+        ask(app)
+        field(app, "YouTube Video ID").set_value("abcdefghijk").run()
+        self.assertEqual(app.session_state["history"], [])
+        next(b for b in app.button if b.label == "🔁 Clear Fields").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(field(app, "YouTube Video ID").value, "")
+        self.assertEqual(app.text_area[0].value, "")
+
+    def test_pilot_requires_prices_before_external_calls(self):
+        os.environ.update(LLM_API_KEY="test-key", VIDSAGE_PILOT="1")
+        app = ask(self.app())
+        self.assertIn("rate card", app.error[0].value)
+        self.fetch.assert_not_called()
+        self.embed.assert_not_called()
+
+    def test_feedback_and_delete_retained_data(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = self.app()
+        next(c for c in app.checkbox if "30 days" in c.label).check()
+        ask(app)
+        self.assertFalse(app.error)
+        next(b for b in app.button if b.label == "Save feedback").click().run()
+        self.assertFalse(app.error)
+        next(b for b in app.button if b.label == "Delete my retained data").click().run()
+        self.assertFalse(app.exception)
         self.assertEqual(app.session_state["history"], [])

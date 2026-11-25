@@ -1,8 +1,6 @@
 # VidSage — YouTube Conversational QA Agent
 
-A retrieval-augmented QA assistant that lets you ask natural language questions about a YouTube video.  
-VidSage extracts the video transcript, chunks and indexes it with your chosen embedding model and FAISS, then answers questions through your chosen chat model. A Streamlit frontend provides video preview, session history, and downloads. The current prompt also permits answers from general knowledge when context is insufficient; strict transcript grounding is not enforced.
-
+A caption-grounded YouTube Q&A app for a private pilot. VidSage prepares a timestamped FAISS index once per session/video, resolves bounded follow-ups, and returns structured claims with backend-generated timestamp links. Reviewed feedback can become offline regression examples for owner-triggered configuration comparisons.
 ---
 
 ## Local setup
@@ -61,44 +59,64 @@ Keep `.env` local and place the server's own file on each deployment. Some cloud
 
 ## How it runs
 
-`main.py` contains the graph and UI; `llm.py` validates provider configuration and adapts embeddings to LangChain:
+`main.py` is the Streamlit caller. The Python backend can also run without Streamlit:
 
-1. `fetch_transcript` downloads the transcript, splits it into 1,000-character chunks with 200-character overlap, embeds them, and builds a FAISS index.
-2. The retriever selects context for the current question.
-3. `our_agent` sends the question and context to the configured chat provider through a two-node LangGraph workflow.
-4. Streamlit displays the answer and stores the exchange in session history, with answer/history downloads.
+| Module | Responsibility |
+| --- | --- |
+| `backend/schemas.py` | Immutable source, chunk, index, answer, trace and feedback contracts; versioned configuration catalog |
+| `backend/ingestion.py` | YouTube URL/ID parsing, language selection, caption fetching and validated timestamp mapping |
+| `backend/indexing.py` | Character chunks with source spans, vector checks and atomic session-memory FAISS publication |
+| `backend/retrieval.py` | Explicit dense retrieval (`k=4`, candidate `k=8`) and bounded, deduplicated source context |
+| `backend/answering.py` | Follow-up resolution, grounded JSON generation, exact-excerpt validation and timestamp links |
+| `backend/service.py` | `prepare_video`, `ask_question`, `record_feedback`; ownership, reuse, request deduplication and LangGraph orchestration |
+| `backend/store.py` | Local SQLite consent, feedback, reviewed examples, quotas, reports, selected version and rollback |
+| `backend/evaluation.py` | Frozen JSONL datasets, retrieval metrics, semantic judging and paired comparisons |
+| `llm.py` | Independent server provider configuration and LiteLLM embedding batching/validation |
 
-The transcript and index are rebuilt for every question. History is a UI record for the current session; previous exchanges are not supplied to the model as conversation context.
+Preparation preserves caption timing, generated-track status, language and content-derived source identity. Chunks start at 1,000 characters with 200 overlap; split captions retain their original available time range. Indexes hold vectors and source mappings, never credential-bearing clients. A second question fetches no captions and embeds no documents. A failed refresh keeps the previous ready artifact for that same video.
 
-## Validation and known issues
+Questions run `resolve → retrieve → generate → validate` through LangGraph. The resolver sees the last three same-video turns (bounded to 2,000 characters each). Context is limited to 4,096 UTF-8 bytes as a conservative token bound. Answers must cite exact excerpts from supplied source IDs; unsupported questions produce an insufficient-context result. Structural citation checks cannot establish that the excerpt logically supports the claim; the judge and human review address that separately.
 
-Basic local checks:
+Each conversation has one active video. Switching videos or clearing history starts a new conversation and releases the active index. History is bounded to 20 turns. Duplicate request IDs return one completed result; failed request IDs remain tombstones. Streamlit also suppresses repeated completed submissions with the same inputs. Requests are serialized per session and provider work is limited to two concurrent operations in the application process.
+
+The app opens without credentials. Configuration and secrets stay on the server, outside indexes, browser settings, history, downloads, and retained traces. Provider calls use a 30-second timeout and no automatic paid retries. The caption client uses 15-second HTTP timeouts and one retry for connection/timeouts. Captions are capped at 500,000 characters/30,000 segments; an index at 2,000 chunks; a question at 2,000 characters; a session at 100 question attempts.
+
+## Pilot retention and spending
+
+Retention is opt-in per answer. SQLite retains traces and attributed feedback for 30 days, purged when the store is opened or the cleanup command runs. Human-approved examples remain until deleted. **Delete my retained data** removes that session's traces, feedback, derived examples, regenerates the managed example export and registered experiment datasets, and invalidates retained comparison reports. Independently copied files and backups are outside this managed deletion path. The SQLite file is created with owner-only permissions.
+
+Set `VIDSAGE_PILOT=1` for invited access and point `VIDSAGE_RATE_CARD` at a private, verified rate card based on `eval/rates.example.json`. The example contains placeholders and is rejected until filled in. Rates must cover worst-case billing for the chosen models/endpoints, including reasoning/output charges. Each app submission reserves at most $0.25; the single-process server admits at most 100 submissions and $5 in conservative reservations per UTC day. Unused or unknown-cost reservations are retained. Local development can run without a rate card when pilot mode is off; it still has request/size/concurrency limits.
+
+Experiments require verified rates, preflight both versions including document preparation, query resolution, generation and judging, and reserve the complete maximum attempt cost **before the first provider call**. A complete experiment must fit $5. Unknown prices stop preflight; invalid judge output, provider failure or exhausted reservations produces an incomplete report. Actual cost stays unknown when provider usage/cost is missing. These controls bound planned calls under the verified rate assumptions; provider billing must be checked during the real smoke test.
+
+Use a persistent local volume and one application process for the pilot. Configure daily retention cleanup on the host:
+
+```bash
+uv run --locked python -m backend purge
+```
+
+## Evaluation and learning
+
+[The evaluation guide](docs/evaluation.md) covers the 60-question review process, first retrieval-only experiment, paired system comparisons, human calibration, selection and rollback. Available owner commands:
+
+```bash
+uv run --locked python -m backend --help
+uv run --locked python -m backend freeze
+uv run --locked python -m backend draft-dataset
+```
+
+The six sources are selected from Veritasium in [eval/videos.json](eval/videos.json), with four development videos and two held-out videos. All six English tracks were fetched successfully on this local machine on November 25, 2026. Frozen captions and 60 source-linked, **unreviewed** drafts are in Git-ignored `eval/local/` in this workspace. Six drafts use clearly marked synthetic caption-injection variants. No real provider experiment has run: working model credentials and verified rates are not configured. No draft is a gold example until a human reviews it.
+
+Release gates still open: human review of the 60 questions/evidence labels, a real retrieval baseline and system/judge comparison, judge calibration, a hosted caption check, provider smoke test and verification of spend/request limits and daily cleanup on the actual host. A local caption success does not establish hosted reliability.
+
+## Validation
 
 ```bash
 uv pip check
-uv run --locked python -m compileall -q main.py llm.py tests
+uv run --locked python -m compileall -q main.py llm.py backend tests
 uv run --locked python -m unittest discover -s tests -v
 ```
 
-The checked-in unittest suite covers startup without credentials, automatic `.env` loading, deployment environment precedence, input validation, server provider/key/endpoint routing, legacy Google keys, credential isolation and redaction, mocked Q&A/history, and embedding batching/response ordering. Tests use temporary configuration files and mocked YouTube/model APIs; they do not read real local keys or verify live account permissions, quotas, or model access.
+The deterministic suite mocks YouTube and LiteLLM. It checks provider isolation, startup/dotenv behavior, timestamp provenance, chunk coverage, vector/index compatibility, context budgets, citations, warm reuse, refresh failures, request deduplication, conversation isolation, consent, retention/deletion, experiment budgets, held-out locking, human review gates, selection and rollback. Streamlit AppTest covers clear/download/feedback controls and repeated submissions. GitHub Actions runs the same checks without provider keys. Tests never read the real local `.env`.
 
-Confirmed issues left for follow-up:
-
-- **Clear Fields** and **Clear History** call `st.experimental_rerun`, which is absent from the pinned Streamlit 1.48.1 and raises `AttributeError`.
-- The retriever uses the misspelled `search_kwags` argument. It is ignored, so retrieval currently relies on the default `k=4` rather than the supplied setting.
-- The prompt asks for transcript-only answers but also permits general-knowledge fallback when context is insufficient.
-
-See [AGENTS.md](AGENTS.md) for the maintained development, validation, and branch/commit/push workflow.
-
-## 🚀 Features
-
-- Fetches YouTube transcripts and converts them to searchable chunks.
-- Embeds chunks using a selectable provider and indexes with FAISS for fast retrieval.
-- Uses a selectable chat model with transcript context.
-- Streamlit frontend with:
-  - Video preview (by video ID)
-  - Question input & “Get Answer” flow
-  - Conversation history persisted in `st.session_state`
-  - Downloadable answers & full history
-
----
+A healthy `/_stcore/health` only proves the server is listening; AppTest verifies script execution separately. See [AGENTS.md](AGENTS.md) for development and Git workflow agreements.

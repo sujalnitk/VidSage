@@ -45,7 +45,7 @@ class EmbeddingTests(unittest.TestCase):
     def test_batches_and_preserves_input_order(self):
         config = model_config("openai/test-embeddings", "embedding-key")
         def embed(input, **kwargs):
-            self.assertEqual(kwargs, config)
+            self.assertEqual(kwargs, {**config, "timeout": 30, "num_retries": 0})
             return SimpleNamespace(data=[
                 {"index": i, "embedding": [float(text)]} for i, text in reversed(list(enumerate(input)))
             ])
@@ -61,9 +61,16 @@ class EmbeddingTests(unittest.TestCase):
             self.assertEqual(embeddings.embed_documents([]), [])
             call.assert_not_called()
             self.assertEqual(embeddings.embed_query("question"), [1.0])
-            call.assert_called_once_with(input=["question"], **config)
+            call.assert_called_once_with(input=["question"], timeout=30, num_retries=0, **config)
 
     def test_rejects_incomplete_embedding_responses(self):
         with patch("llm.litellm.embedding", return_value=SimpleNamespace(data=[])):
             with self.assertRaisesRegex(ValueError, "invalid vectors"):
                 ModelEmbeddings(model_config("openai/test", "key")).embed_documents(["text"])
+
+    def test_rejects_nonfinite_empty_and_inconsistent_vectors(self):
+        for vectors in ([[float("nan")]], [[]], [[1.0], [1.0, 2.0]], [[True]], [["bad"]]):
+            data = [{"index": i, "embedding": v} for i, v in enumerate(vectors)]
+            with self.subTest(vectors=vectors), patch("llm.litellm.embedding", return_value=SimpleNamespace(data=data)):
+                with self.assertRaises(ValueError):
+                    ModelEmbeddings(model_config("openai/test", "key")).embed_documents(["text"] * len(vectors))
