@@ -16,6 +16,7 @@ def field(app, label):
 
 def ask(app):
     field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ")
+    next(b for b in app.button if b.label == "Open video").click().run()
     app.chat_input[0].set_value("What is the video about?").run()
     return app
 
@@ -59,6 +60,7 @@ class ProviderAppTests(unittest.TestCase):
         os.environ["LLM_API_KEY"] = "test-key"
         app = self.app()
         field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ").run()
+        next(b for b in app.button if b.label == "Open video").click().run()
         app.chat_input[0].set_value("What is RAG?").run()
         app.chat_input[0].set_value("Explain more").run()
         self.assertFalse(app.exception)
@@ -80,10 +82,11 @@ class ProviderAppTests(unittest.TestCase):
     def test_validates_video_and_question_before_provider_settings(self):
         app = self.app()
         app.chat_input[0].set_value("What is the video about?").run()
-        self.assertEqual(app.warning[0].value, "Please enter a YouTube video ID.")
+        self.assertIn("Please enter a YouTube video ID and select Open video.", [item.value for item in app.warning])
         field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ")
+        next(b for b in app.button if b.label == "Open video").click().run()
         app.chat_input[0].set_value("   ").run()
-        self.assertEqual(app.warning[0].value, "Please type a question to ask about the video.")
+        self.assertIn("Please type a question to ask about the video.", [item.value for item in app.warning])
         self.fetch.assert_not_called()
 
     def test_google_server_key_never_appears_in_browser_fields(self):
@@ -211,19 +214,59 @@ class ProviderAppTests(unittest.TestCase):
         self.assertEqual([item.label for item in app.get("download_button")],
                          ["💾 Download Answer (txt)", "📥 Download Full History (JSON)"])
 
+    def test_video_edits_preserve_discussion_until_explicit_open(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        original_conversation = app.session_state["session"].conversation_id
+        for draft in ("", "https://youtu", "abcdefghijk"):
+            field(app, "YouTube Video ID").set_value(draft).run()
+            self.assertEqual(len(app.chat_message), 2)
+            self.assertEqual(app.session_state["session"].conversation_id, original_conversation)
+        self.assertTrue(any("discards" in item.value and "discussion" in item.value for item in app.warning))
+        next(b for b in app.button if b.label == "Open video").click().run()
+        self.assertEqual(app.session_state["history"], [])
+        self.assertEqual(len(app.chat_message), 0)
+        self.assertNotIn("submission", app.session_state)
+        field(app, "YouTube Video ID").set_value("dQw4w9WgXcQ").run()
+        next(b for b in app.button if b.label == "Open video").click().run()
+        self.assertEqual(app.session_state["history"], [])
+        self.assertNotEqual(app.session_state["session"].conversation_id, original_conversation)
+
+    def test_same_video_url_and_invalid_open_preserve_active_discussion(self):
+        os.environ["LLM_API_KEY"] = "test-key"
+        app = ask(self.app())
+        original_conversation = app.session_state["session"].conversation_id
+        for value in ("https://youtu.be/dQw4w9WgXcQ?t=10", "https://youtu"):
+            field(app, "YouTube Video ID").set_value(value).run()
+            next(b for b in app.button if b.label == "Open video").click().run()
+            self.assertEqual(len(app.chat_message), 2)
+            self.assertEqual(app.session_state["session"].conversation_id, original_conversation)
+        self.assertTrue(app.error)
+        app.chat_input[0].set_value("Explain more").run()
+        self.assertFalse(app.error)
+        self.assertEqual(len(app.chat_message), 4)
+        self.fetch.assert_called_once()
+
     def test_clear_controls_and_video_switch_remove_stale_answers(self):
         os.environ["LLM_API_KEY"] = "test-key"
         app = ask(self.app())
+        self.assertTrue(any("discards" in item.value for item in app.warning))
+        self.assertTrue(any("retained data remains" in item.value for item in app.caption))
         next(b for b in app.button if b.label == "🧹 Clear History").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state["history"], [])
+        self.assertNotIn("submission", app.session_state)
+        self.assertEqual(len(app.chat_message), 0)
         ask(app)
         field(app, "YouTube Video ID").set_value("abcdefghijk").run()
+        next(b for b in app.button if b.label == "Open video").click().run()
         self.assertEqual(app.session_state["history"], [])
         next(b for b in app.button if b.label == "🔁 Clear Fields").click().run()
         self.assertFalse(app.exception)
         self.assertEqual(field(app, "YouTube Video ID").value, "")
         self.assertEqual(app.chat_input[0].value, "")
+        self.assertNotIn("submission", app.session_state)
+        self.assertIsNone(app.session_state["session"].video_id)
 
     def test_pilot_requires_prices_before_external_calls(self):
         os.environ.update(LLM_API_KEY="test-key", VIDSAGE_PILOT="1")

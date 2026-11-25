@@ -53,24 +53,24 @@ st.caption("Ask about a captioned YouTube video. Answers cite the original capti
 left, right = st.columns([2, 1])
 with left:
     video = st.text_input("YouTube Video ID", key="video_input", placeholder="YouTube URL or 11-character ID")
-    active_video = None
-    if video.strip():
+    st.warning("Changing videos or clearing fields/history discards the current discussion. Returning to a video will not restore it.")
+    if st.button("Open video"):
         try:
-            active_video = parse_video(video)
-            if session.video_id != active_video:
-                session.switch(active_video)
-            st.video(f"https://www.youtube.com/watch?v={active_video}")
-        except PipelineError:
-            if session.video_id is not None:
-                session.switch()
-    elif session.video_id is not None:
-        session.switch()
+            selected_video = parse_video(video)
+            if session.video_id != selected_video:
+                session.switch(selected_video)
+                st.session_state.pop("submission", None)
+        except PipelineError as error:
+            st.error(str(error))
+    active_video = session.video_id
+    if active_video:
+        st.video(f"https://www.youtube.com/watch?v={active_video}")
     consent = st.checkbox("Keep this question, answer, and feedback locally for 30 days", value=False)
     st.caption("Reviewed evaluation examples remain until deleted. You can delete your retained data below.")
     refresh = st.checkbox("Refresh captions on the next question", value=False)
     st.button("🔁 Clear Fields", on_click=clear_fields)
     if st.checkbox("Show instructions"):
-        st.info("Enter a YouTube URL or ID, then send a message below. Follow-up questions use recent exchanges from this video. Switching videos starts a new conversation.")
+        st.info("Enter a YouTube URL or ID, select Open video, then send a message below. Follow-up questions use recent exchanges from this video. Switching videos starts a new conversation.")
 
     st.caption("Session-only conversation: a reload or closed session may lose this discussion. Download it to keep a copy.")
     if active_video:
@@ -83,12 +83,11 @@ with left:
         question = submission["question"]
         chat, embedding = {}, {}
         try:
-            if not video.strip():
-                st.warning("Please enter a YouTube video ID.")
+            if not active_video:
+                st.warning("Please enter a YouTube video ID and select Open video.")
             elif not question.strip():
                 st.warning("Please type a question to ask about the video.")
             else:
-                parse_video(video)
                 if len(question.strip()) > 2000:
                     raise ValueError("Enter a question of 1–2,000 characters.")
                 chat, embedding = server_configs()
@@ -101,7 +100,7 @@ with left:
                     raise ValueError("Configure a verified server rate card before opening the pilot.")
                 store.reserve(0.25 if meter else 0)
                 with st.spinner("Preparing captions and finding evidence…"):
-                    prepared = prepare_video(session, video, embedding, config, refresh=refresh, meter=meter)
+                    prepared = prepare_video(session, active_video, embedding, config, refresh=refresh, meter=meter)
                     ask_question(session, prepared.id, question, submission["id"], chat, embedding, config,
                                  consent, store, meter)
                 st.success("Answer ready")
@@ -139,8 +138,9 @@ with right:
         st.caption("No messages yet.")
     st.download_button("📥 Download Full History (JSON)", json.dumps(session.history, indent=2),
                        file_name="vidsage_history.json", mime="application/json")
+    st.caption("Clearing fields/history only discards this session discussion; retained data remains until deleted below.")
     st.button("🧹 Clear History", on_click=clear_history)
     if st.button("Delete my retained data"):
         Store(os.getenv("VIDSAGE_DB", ".vidsage/pilot.sqlite3")).delete_session(session.id)
-        session.switch(session.video_id)
+        clear_history()
         st.rerun()
