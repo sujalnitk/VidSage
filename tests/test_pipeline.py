@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from backend.answering import generate_answer, resolve_query, validate_citations
+from backend.answering import MAX_CLAIMS, MAX_EVIDENCE_PER_CLAIM, generate_answer, resolve_query, validate_citations
 from backend.evaluation import load_snapshot
 from backend.indexing import build_index, chunk_transcript, embedding_profile
 from backend.ingestion import fetch_transcript, map_timestamps, parse_video
@@ -155,9 +155,33 @@ class ComponentTests(unittest.TestCase):
                 generate_answer("question", context, CHAT)
         with patch("llm.litellm.completion", side_effect=completion) as complete:
             self.assertEqual(generate_answer("question", context, CHAT).outcome, "answered")
-            self.assertIn("untrusted data", complete.call_args.kwargs["messages"][0]["content"])
+            prompt = complete.call_args.kwargs["messages"][0]["content"]
+            self.assertIn("untrusted data", prompt)
+            self.assertIn(f"1 to {MAX_CLAIMS} concise claims", prompt)
+            self.assertIn(f"1 to {MAX_EVIDENCE_PER_CLAIM} evidence items", prompt)
         empty = assemble_context((), self.source)
         self.assertEqual(generate_answer("question", empty, CHAT).outcome, "insufficient_context")
+
+    def test_invalid_answers_report_the_failed_rule_without_returning_a_draft(self):
+        context = assemble_context(retrieve("evidence", self.prepared, ModelEmbeddings(EMBED), self.prepared.profile), self.source)
+        evidence = {"source_id": "S1", "excerpt": "caption"}
+        claim = {"text": "A claim", "evidence": [evidence]}
+        for outcome, claims, reason in (
+            ("answered", [], "an answer had no claims"),
+            ("insufficient_context", [claim], "an insufficient-context response included claims"),
+            ("answered", [claim] * (MAX_CLAIMS + 1), "invalid claim list"),
+            ("answered", [dict(claim, evidence=[])], "a claim must have"),
+            ("answered", [dict(claim, evidence=[evidence] * (MAX_EVIDENCE_PER_CLAIM + 1))], "a claim must have"),
+            ("answered", [None], "a claim had invalid fields or text"),
+            ("answered", [dict(claim, evidence=[None])], "a caption excerpt or source ID was invalid"),
+        ):
+            payload = json.dumps({"outcome": outcome, "claims": claims})
+            response = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=payload))])
+            with self.subTest(reason=reason), patch("llm.litellm.completion", return_value=response) as complete:
+                with self.assertRaisesRegex(PipelineError, reason) as error:
+                    generate_answer("What is this video about?", context, CHAT)
+                self.assertEqual(error.exception.category, "invalid_answer")
+                complete.assert_called_once()
 
     def test_answer_requests_native_schema_only_when_model_supports_it(self):
         context = assemble_context(retrieve("evidence", self.prepared, ModelEmbeddings(EMBED), self.prepared.profile), self.source)

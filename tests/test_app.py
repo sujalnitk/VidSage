@@ -419,12 +419,13 @@ class ProviderAppTests(unittest.TestCase):
     def test_invalid_answer_shape_is_actionable_and_does_not_show_raw_output(self):
         os.environ["LLM_API_KEY"] = "test-key"
         app = self.app()
-        raw = '{"outcome":"answered","claims":[],"private":"model detail"}'
+        raw = '{"outcome":"answered","claims":[{"text":"private model detail","evidence":[]}]}'
         self.complete.return_value.choices[0].message.content = raw
         ask(app)
-        self.assertIn("invalid structured answer", app.error[0].value)
+        self.assertIn("invalid structured answer: a claim must have", app.error[0].value)
         self.assertIn("Retry", str(app.chat_message))
-        self.assertNotIn("private", app.error[0].value)
+        self.assertNotIn("private model detail", str(app.chat_message))
+        self.complete.assert_called_once()
         self.assertEqual(app.session_state["history"], [])
 
     def test_deliberate_repeated_message_creates_new_exchange_and_reuses_index(self):
