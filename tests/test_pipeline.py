@@ -159,6 +159,29 @@ class ComponentTests(unittest.TestCase):
         empty = assemble_context((), self.source)
         self.assertEqual(generate_answer("question", empty, CHAT).outcome, "insufficient_context")
 
+    def test_answer_requests_native_schema_only_when_model_supports_it(self):
+        context = assemble_context(retrieve("evidence", self.prepared, ModelEmbeddings(EMBED), self.prepared.profile), self.source)
+        with patch("backend.answering.supports_answer_schema", return_value=True), \
+                patch("llm.litellm.completion", side_effect=completion) as complete:
+            generate_answer("question", context, CHAT)
+        schema = complete.call_args.kwargs["response_format"]["json_schema"]["schema"]
+        self.assertEqual(schema["required"], ["outcome", "claims"])
+        self.assertFalse(schema["additionalProperties"])
+
+        with patch("backend.answering.supports_answer_schema", return_value=False), \
+                patch("llm.litellm.completion", side_effect=completion) as complete:
+            generate_answer("question", context, CHAT)
+        self.assertNotIn("response_format", complete.call_args.kwargs)
+
+    def test_provider_rejecting_schema_fails_once_without_prompt_only_retry(self):
+        context = assemble_context(retrieve("evidence", self.prepared, ModelEmbeddings(EMBED), self.prepared.profile), self.source)
+        with patch("backend.answering.supports_answer_schema", return_value=True), \
+                patch("llm.litellm.completion", side_effect=RuntimeError("unsupported response_format json_schema")) as complete:
+            with self.assertRaisesRegex(PipelineError, "Contact the VidSage owner") as error:
+                generate_answer("question", context, CHAT)
+        self.assertEqual(error.exception.category, "structured_output_unsupported")
+        complete.assert_called_once()
+
 
 class ServiceTests(unittest.TestCase):
     def setUp(self):

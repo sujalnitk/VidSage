@@ -17,3 +17,6 @@ A viewer message and its completed VidSage response within a **Video conversatio
 **Caption evidence**:
 Passages from a video's captions that support factual claims in a response.
 Earlier responses are conversational context, not **Caption evidence**.
+
+**Structured answer**:
+A VidSage response with an outcome and claims whose supporting passages are drawn from **Caption evidence**.
