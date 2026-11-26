@@ -9,13 +9,13 @@
 
 ## Project map
 
-- `main.py` contains Streamlit inputs, answer/citation display, session controls, and feedback consent. It calls the backend; no model settings are exposed to visitors.
+- `main.py` contains chronological Streamlit chat, submission identity, explicit failed-message Retry, explicit Open video selection, answer/citation display, session controls, and feedback consent. Editing the video field must preserve the active conversation until Open video is selected. It calls the backend; no model settings are exposed to visitors.
 - `backend/schemas.py` defines shared immutable contracts and the allowlisted configuration catalog. `backend/ingestion.py`, `indexing.py`, `retrieval.py`, and `answering.py` contain independently testable stages.
-- `backend/service.py` exposes `prepare_video`, `ask_question`, and `record_feedback`. Its question graph is `START -> resolve -> retrieve -> generate -> validate -> END`.
+- `backend/service.py` exposes `prepare_video`, `ask_question`, and `record_feedback`. Its question graph is `START -> resolve -> retrieve -> generate -> validate -> END`. Generation preserves the original message and bounded same-video context alongside the retrieval query; prior replies never count as caption evidence.
 - `backend/store.py` owns SQLite retention, reviewed examples, quotas, comparison reports, selection, and rollback. `backend/evaluation.py` and `python -m backend` implement owner-triggered experiments. See `docs/evaluation.md` for the workflow and remaining release gates.
 - `local_embeddings.py` runs pinned MiniLM with ONNX Runtime; `llm.py` lazily caches the CPU model for `local/all-MiniLM-L6-v2` (no key/endpoint); local chunks must stay within 256 tokens with their original source spans preserved. Local usage has zero API cost and is excluded from paid reservations.
 - `llm.py` validates independent model/credential/endpoint settings and adapts LiteLLM embeddings. `litellm-core` supplies chat and embeddings; do not install the overlapping `litellm` distribution.
-- FAISS indexes live in one session/conversation, hold no credential-bearing adapter, and are reused across questions. Publication is atomic; a failed same-video refresh preserves the ready index. History is limited to 20 turns; the resolver sees three bounded same-video turns.
+- FAISS indexes live in one session/conversation, hold no credential-bearing adapter, and are reused across questions. Publication is atomic; a failed same-video refresh preserves the ready index. History is limited to the latest 20 exchanges; resolution and generation receive their full question/answer text with stable exchange numbers. Pruning is visible and requests for removed context require restatement.
 - `pyproject.toml` declares dependencies; `uv.lock` pins them; `.python-version` selects Python 3.11. Reuse installed packages and the standard library.
 - `eval/videos.json` selects six Veritasium sources. Real captions/datasets/reports and SQLite belong only in Git-ignored `eval/local/` and `.vidsage/`; committed fixtures are synthetic. Human review is required for reference examples and changed judge outcomes.
 - The README records verified setup, architecture, limits, and unresolved release gates. `docs/product-design.md` is product context; `docs/backend-pipeline-plan.md` describes the implemented boundaries and pending validation.

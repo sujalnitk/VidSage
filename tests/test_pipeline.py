@@ -13,7 +13,7 @@ from backend.indexing import build_index, chunk_transcript, embedding_profile
 from backend.ingestion import fetch_transcript, map_timestamps, parse_video
 from backend.retrieval import assemble_context, retrieve
 from backend.schemas import AnswerDraft, CATALOG, ChunkPolicy, Claim, Evidence, PipelineError
-from backend.service import Session, ask_question, prepare_video, record_feedback
+from backend.service import Session, ask_question, decide_refresh, prepare_video, record_feedback
 from backend.store import Store
 from llm import ModelEmbeddings
 
@@ -185,6 +185,95 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(self.session.history), 2)
         self.assertEqual(self.complete.call_count, 3)  # second question resolves history
 
+    def test_unchanged_refresh_preserves_conversation_without_embedding_documents(self):
+        self.ask()
+        history = list(self.session.history)
+        calls = self.embed.call_count
+        refreshed = prepare_video(self.session, self.source.video_id, EMBED, refresh=True)
+        self.assertIs(refreshed, self.ready)
+        self.assertEqual(self.session.history, history)
+        self.assertEqual(self.embed.call_count, calls)
+
+    def test_changed_refresh_is_staged_then_accepted_without_provider_work(self):
+        self.ask()
+        old_conversation = self.session.conversation_id
+        self.fetch.return_value = map_timestamps(self.source.video_id, "en", False, [
+            {"text": "New caption evidence", "start": 4, "duration": 3}])
+        candidate = prepare_video(self.session, self.source.video_id, EMBED, refresh=True)
+        self.assertIs(self.session.prepared, self.ready)
+        self.assertEqual(len(self.session.history), 1)
+        with self.assertRaisesRegex(PipelineError, "Prepare"):
+            ask_question(self.session, candidate.id, "question", "candidate", CHAT, EMBED)
+        calls = self.embed.call_count, self.complete.call_count, self.fetch.call_count
+        self.assertIs(decide_refresh(self.session, candidate.id, True), candidate)
+        self.assertNotEqual(self.session.conversation_id, old_conversation)
+        self.assertEqual(self.session.history, [])
+        self.assertEqual(calls, (self.embed.call_count, self.complete.call_count, self.fetch.call_count))
+        with self.assertRaisesRegex(PipelineError, "Prepare"):
+            self.ask("old")
+        ask_question(self.session, candidate.id, "new question", "new", CHAT, EMBED)
+        self.assertEqual(self.session.history[0]["result"]["prepared_id"], candidate.id)
+
+    def test_refresh_decision_rejects_foreign_and_stale_candidates(self):
+        self.fetch.return_value = map_timestamps(self.source.video_id, "en", False, [
+            {"text": "New captions", "start": 4, "duration": 3}])
+        candidate = prepare_video(self.session, self.source.video_id, EMBED, refresh=True)
+        other = Session()
+        other.prepared, other.pending_refresh = self.ready, candidate
+        other.refresh_base, other.video_id = self.ready, self.source.video_id
+        with self.assertRaises(PipelineError):
+            decide_refresh(other, candidate.id, True)
+        self.session.switch(self.source.video_id)
+        with self.assertRaises(PipelineError):
+            decide_refresh(self.session, candidate.id, True)
+
+    def test_failed_replacement_embedding_or_validation_preserves_conversation(self):
+        self.ask()
+        history = list(self.session.history)
+        self.fetch.return_value = map_timestamps(self.source.video_id, "en", False, [
+            {"text": "Changed captions", "start": 4, "duration": 3}])
+        for response in (RuntimeError("temporary embedding failure"), SimpleNamespace(data=[
+                {"index": 0, "embedding": [float("nan"), 0, 0]}])):
+            with self.subTest(response=type(response).__name__):
+                self.embed.side_effect = response if isinstance(response, Exception) else None
+                self.embed.return_value = response
+                with self.assertRaises((RuntimeError, ValueError, PipelineError)):
+                    prepare_video(self.session, self.source.video_id, EMBED, refresh=True)
+                self.assertIs(self.session.prepared, self.ready)
+                self.assertEqual(self.session.history, history)
+                self.assertIsNone(self.session.pending_refresh)
+        self.embed.side_effect = embedding
+        self.ask("still-usable")
+
+    def test_refresh_cannot_publish_after_conversation_changes_during_embedding(self):
+        self.fetch.return_value = map_timestamps(self.source.video_id, "en", False, [
+            {"text": "Changed captions", "start": 4, "duration": 3}])
+        def switch_during_embedding(**kwargs):
+            self.session.switch("abcdefghijk")
+            return embedding(**kwargs)
+        self.embed.side_effect = switch_during_embedding
+        with self.assertRaisesRegex(PipelineError, "changed during"):
+            prepare_video(self.session, self.source.video_id, EMBED, refresh=True)
+        self.assertEqual(self.session.video_id, "abcdefghijk")
+        self.assertIsNone(self.session.prepared)
+        self.assertIsNone(self.session.pending_refresh)
+
+    def test_retained_context_stays_bounded_without_renumbering_and_resets_on_switch(self):
+        for i in range(22):
+            self.ask(str(i))
+        self.assertEqual([turn["exchange_number"] for turn in self.session.history], list(range(3, 23)))
+        for call in self.complete.call_args_list:
+            payload = json.loads(call.kwargs["messages"][-1]["content"])
+            self.assertLessEqual(len(payload["history"]), 20)
+        self.assertEqual(self.session.removed_exchanges, 2)
+        self.ask("21")  # Duplicate delivery does not prune another exchange.
+        self.assertEqual(self.session.removed_exchanges, 2)
+        self.session.switch(self.source.video_id)
+        self.ready = prepare_video(self.session, self.source.video_id, EMBED)
+        self.ask("fresh")
+        self.assertEqual(self.session.history[0]["exchange_number"], 1)
+        self.assertEqual(self.session.removed_exchanges, 0)
+
     def test_failed_refresh_preserves_ready_index(self):
         self.fetch.side_effect = RuntimeError("temporary")
         with self.assertRaises(RuntimeError):
@@ -210,6 +299,34 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(self.complete.call_count, 1)
         self.assertEqual(self.session.history, [])
 
+    def test_explicit_new_attempt_preserves_completed_exchange_and_reuses_success(self):
+        first = self.ask("first")
+        self.complete.side_effect = RuntimeError("temporary provider failure")
+        with self.assertRaises(RuntimeError):
+            self.ask("failed")
+        self.assertIs(self.session.prepared, self.ready)
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["first"])
+        self.complete.side_effect = completion
+        retried = self.ask("explicit-retry")
+        calls = self.complete.call_count
+        self.assertEqual(self.ask("explicit-retry"), retried)
+        self.assertEqual(self.ask("first"), first)
+        self.assertEqual(self.complete.call_count, calls)
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["first", "explicit-retry"])
+
+    def test_failed_new_attempts_exhaust_session_request_limit(self):
+        self.ask("first")
+        self.complete.side_effect = RuntimeError("temporary provider failure")
+        for attempt in range(99):
+            with self.assertRaises(RuntimeError):
+                self.ask(f"failed-{attempt}")
+        calls = self.complete.call_count
+        with self.assertRaisesRegex(PipelineError, "100-question limit"):
+            self.ask("explicit-retry")
+        self.assertEqual(self.complete.call_count, calls)
+        self.assertIs(self.session.prepared, self.ready)
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["first"])
+
     def test_video_session_isolation_and_stale_answers(self):
         other = Session()
         with self.assertRaisesRegex(PipelineError, "Prepare"):
@@ -222,6 +339,23 @@ class ServiceTests(unittest.TestCase):
             self.ask()
         self.assertEqual(self.session.history, [])
         self.assertIsNone(self.session.prepared)
+
+    def test_clear_during_answer_rejects_stale_result_even_for_same_video(self):
+        original_conversation = self.session.conversation_id
+        def clear(messages, **kwargs):
+            self.session.switch(self.source.video_id)
+            return completion(messages, **kwargs)
+        self.complete.side_effect = clear
+        with self.assertRaisesRegex(PipelineError, "active video changed"):
+            self.ask("stale-after-clear")
+        self.assertEqual(self.session.history, [])
+        self.assertNotEqual(self.session.conversation_id, original_conversation)
+        self.complete.side_effect = completion
+        self.ready = prepare_video(self.session, self.source.video_id, EMBED)
+        with self.assertRaisesRegex(PipelineError, "already used"):
+            self.ask("stale-after-clear")
+        self.ask("fresh-after-clear")
+        self.assertEqual([turn["request_id"] for turn in self.session.history], ["fresh-after-clear"])
 
     def test_consent_feedback_attribution_and_credential_isolation(self):
         self.ask("private")

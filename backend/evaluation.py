@@ -8,7 +8,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from llm import ModelEmbeddings, LOCAL_EMBEDDING_MODEL
-from .answering import ANSWER_SCHEMA, PROMPTS, complete_json, generate_answer, resolve_query, validate_citations
+from .answering import ANSWER_SCHEMA, PROMPTS, complete_json, conversation_context, generate_answer, resolve_query, validate_citations
 from .budget import Meter, PROVIDER_SLOTS
 from .indexing import build_index, chunk_transcript, embedding_profile
 from .ingestion import map_timestamps
@@ -63,7 +63,7 @@ def validate_example(example, snapshot=None):
                 or any(s not in ids for group in groups for s in group)):
             raise ValueError("An example does not match its frozen source segments.")
     history = example.get("history", [])
-    if (not isinstance(history, list) or len(history) > 3
+    if (not isinstance(history, list) or len(history) > 20
             or any(t.get("video_id") != example["video_id"] or not isinstance(t.get("question"), str)
                    or not isinstance(t.get("answer"), str) for t in history)):
         raise ValueError("Fixture history must be bounded and from the same video.")
@@ -133,10 +133,12 @@ def preflight(examples, snapshots, baseline, candidate, embedding, chat, judge, 
             # Resolver output is capped at 2,000 characters (at most 8,000 UTF-8 bytes).
             if embedding["model"] != LOCAL_EMBEDDING_MODEL:
                 plans.append((embedding["model"], 8016, 0))
+            # complete_json serializes the JSON payload inside the message envelope.
+            history_bytes = len(json.dumps(json.dumps(conversation_context(e.get("history", [])))).encode())
             if e.get("history"):
-                plans.append((chat["model"], 100000, 300))
+                plans.append((chat["model"], 40000 + history_bytes, 300))
             if mode == "system":
-                plans.append((chat["model"], 40000 + config.context_tokens * 6, 1200))
+                plans.append((chat["model"], 40000 + history_bytes + config.context_tokens * 6, 1200))
                 gold_bytes = len(json.dumps([asdict(s) for s in snapshots[e["source_version"]].segments
                                            if any(s.id in g for g in e["evidence_sets"])]).encode())
                 plans.append((judge["model"], 100000 + gold_bytes, 300))
@@ -216,7 +218,8 @@ def experiment(examples, snapshots, candidate_name, embedding_config, chat_confi
                     row = {"retrieval": retrieval_metrics(passages, e), "passages": [asdict(p) for p in passages],
                            "cold_preparation_seconds": prepared.preparation_seconds if cold else None}
                     if mode == "system":
-                        draft = generate_answer(query, context, chat_config, config.prompt, report["usage"], meter)
+                        draft = generate_answer(e["question"], context, chat_config, config.prompt, report["usage"], meter,
+                                                history=e.get("history", []), retrieval_query=query)
                         result = validate_citations(draft, context, prepared, e["id"], config.version)
                         row["answer"] = asdict(result)
                         row["quality"] = judge_answer(e, result, source, judge_config, report["usage"], meter)
